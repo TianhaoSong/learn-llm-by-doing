@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>C-M4 · Slack agent 工具设计（辅助） — learn-llm-by-doing</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #ffffff; --bg-soft: #fafafa; --fg: #111111; --fg-2: #2a2a2a;
+    --muted: #6a6a6a; --border: #e2e2e2; --border-strong: #111111; --accent: #c0392b;
+    --sans: 'IBM Plex Sans', -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    --mono: 'IBM Plex Mono', ui-monospace, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0e0e0e; --bg-soft: #161616; --fg: #e8e8e8; --fg-2: #c4c4c4;
+      --muted: #888888; --border: #2a2a2a; --border-strong: #e8e8e8; --accent: #e57367; }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; font-family: var(--sans); background: var(--bg); color: var(--fg); line-height: 1.7; font-size: 15px; -webkit-font-smoothing: antialiased; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code { font-family: var(--mono); background: var(--bg-soft); padding: 1px 5px; border-radius: 2px; font-size: 0.9em; }
+  ::selection { background: var(--accent); color: var(--bg); }
+  .layout { max-width: 880px; margin: 0 auto; padding: 32px 32px 60px; }
+  .back { font-family: var(--mono); font-size: 12px; color: var(--muted); display: inline-block; margin-bottom: 16px; padding: 4px 8px; border: 1px solid var(--border); }
+  .back:hover { color: var(--accent); border-color: var(--accent); text-decoration: none; }
+  .module-head { display: flex; align-items: baseline; gap: 12px; padding-bottom: 10px; border-bottom: 2px solid var(--border-strong); margin-bottom: 16px; flex-wrap: wrap; }
+  .module-head .code { font-family: var(--mono); font-size: 13px; color: var(--accent); font-weight: 500; letter-spacing: 0.03em; }
+  .module-head h1 { font-size: 24px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+  .topic { padding: 12px 14px; background: var(--bg-soft); border-left: 2px solid var(--accent); font-size: 13px; line-height: 1.65; color: var(--fg-2); margin: 0 0 24px 0; }
+  .topic .label { font-family: var(--mono); font-size: 10px; color: var(--accent); letter-spacing: 0.06em; font-weight: 500; margin-right: 6px; }
+  .section { margin: 32px 0; }
+  .section-head { display: flex; align-items: baseline; gap: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--border-strong); margin-bottom: 16px; }
+  .section-head .num { font-family: var(--mono); font-size: 11px; color: var(--muted); letter-spacing: 0.04em; }
+  .section-head h2 { font-size: 17px; font-weight: 600; margin: 0; letter-spacing: -0.005em; }
+  .setup h4 { font-family: var(--mono); font-size: 11px; color: var(--muted); letter-spacing: 0.05em; margin: 14px 0 6px 0; font-weight: 500; }
+  .setup h4:first-child { margin-top: 0; }
+  .setup ul { margin: 0; padding-left: 22px; font-size: 14px; line-height: 1.7; }
+  .setup li { margin-bottom: 4px; }
+  .nav-pills { display: flex; gap: 8px; padding: 8px 0; margin-bottom: 16px; position: sticky; top: 0; background: var(--bg); z-index: 10; border-bottom: 1px solid var(--border); }
+  .nav-pills a { font-family: var(--mono); font-size: 11px; padding: 6px 10px; border: 1px solid var(--border); color: var(--muted); letter-spacing: 0.04em; }
+  .nav-pills a:hover { color: var(--accent); border-color: var(--accent); text-decoration: none; }
+
+  /* Markdown rendered */
+  .md-rendered { font-size: 14px; line-height: 1.7; color: var(--fg-2); }
+  .md-rendered h1 { display: none; }
+  .md-rendered h2 { font-size: 16px; font-weight: 600; color: var(--fg); margin: 22px 0 10px 0; padding-bottom: 6px; border-bottom: 1px solid var(--border-strong); letter-spacing: -0.005em; }
+  .md-rendered h3 { font-size: 14px; font-weight: 600; color: var(--fg); margin: 16px 0 8px 0; font-family: var(--mono); letter-spacing: 0.02em; }
+  .md-rendered h4 { font-family: var(--mono); font-size: 11px; color: var(--muted); letter-spacing: 0.05em; margin: 12px 0 4px 0; font-weight: 500; }
+  .md-rendered p { margin: 8px 0; }
+  .md-rendered ul, .md-rendered ol { margin: 6px 0 10px 0; padding-left: 24px; }
+  .md-rendered li { margin-bottom: 4px; }
+  .md-rendered ul ul, .md-rendered ol ol { margin: 4px 0; }
+  .md-rendered blockquote { margin: 10px 0; padding: 10px 14px; border-left: 2px solid var(--muted); background: var(--bg-soft); color: var(--fg-2); font-size: 13.5px; }
+  .md-rendered blockquote p { margin: 4px 0; }
+  .md-rendered code { font-family: var(--mono); background: var(--bg-soft); padding: 1px 5px; border-radius: 2px; font-size: 0.88em; color: var(--fg); }
+  .md-rendered pre { background: var(--bg-soft); border: 1px solid var(--border); padding: 12px 14px; overflow-x: auto; font-size: 12.5px; line-height: 1.55; margin: 10px 0; }
+  .md-rendered pre code { background: transparent; padding: 0; font-size: 12.5px; }
+  .md-rendered a { color: var(--accent); border-bottom: 1px solid currentColor; word-break: break-word; }
+  .md-rendered a:hover { background: var(--accent); color: var(--bg); text-decoration: none; }
+  .md-rendered strong { color: var(--fg); font-weight: 600; }
+  .md-rendered table { border-collapse: collapse; margin: 10px 0; font-size: 13px; width: 100%; }
+  .md-rendered th, .md-rendered td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; vertical-align: top; }
+  .md-rendered th { background: var(--bg-soft); font-family: var(--mono); font-size: 11px; color: var(--muted); font-weight: 500; }
+  .md-rendered hr { border: none; border-top: 1px solid var(--border); margin: 18px 0; }
+  footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--border); font-size: 12px; color: var(--muted); font-family: var(--mono); }
+</style>
+</head>
+<body>
+
+<div class="layout">
+  <a href="index.html#c-m4" class="back">← 回索引</a>
+  
+  <div class="module-head">
+    <span class="code">C·M4</span>
+    <h1>Slack agent 工具设计（辅助）</h1>
+  </div>
+  <div class="topic"><span class="label">TOPIC</span>工具设计的取舍——粗工具 vs 细工具粒度、schema description 对 model 调用准确率的影响、Read-only vs Write 工具的安全边界、限速 / quota 处理。这是辅助模块——只写文档，不实现 agent，但有面试可讲的"工具设计"细节。</div>
+
+  <nav class="nav-pills">
+    <a href="#setup">0 · 环境准备</a>
+    <a href="#doing">1 · Doing 任务</a>
+    <a href="#quiz">2 · 过关 Quiz</a>
+  </nav>
+
+  <section class="section" id="setup">
+    <div class="section-head"><span class="num">0</span><h2>环境准备</h2></div>
+    <div class="setup">
+<h4>快速 setup</h4>
+<ul>
+<li>这个模块<strong>只写文档</strong>（<code>slack_agent_tools.md</code>），不实现 agent</li>
+<li>仓库布局：在一个 Slack agent 项目内 <code>docs/tools.md</code>，或单独写一份外发版本</li>
+</ul>
+<h4>值得理解</h4>
+<ul>
+<li><strong>工具粒度的判断</strong>：粗工具省 round trip 但参数空间大、model 容易调错；细工具调用次数多但每次决策简单。<strong>经验法则</strong>：高频常用动作粗一些，低频危险动作细一些（强迫 model 多步确认）</li>
+<li><strong>schema 描述</strong>对 model 调用准确率影响大：参数加 <code>description</code> + 给 1–2 个 example 调用、能减少 50%+ 的参数错误</li>
+<li><strong>Read vs Write 边界</strong>：所有 write 工具（create_ticket / send_message）必须有 dry-run mode + 调用前 confirmation；这是合规要求也是 production safety</li>
+<li><strong>限速 / quota</strong>：Slack API 有严格 rate limit，工具内部要做指数退避；不要让 model 看到 429 错误（让它误以为该换工具）</li>
+</ul>
+    </div>
+  </section>
+
+  <section class="section" id="doing">
+    <div class="section-head"><span class="num">1</span><h2>Doing 任务（DOING.md）</h2></div>
+    <div class="md-rendered" id="doing-content">Loading…</div>
+  </section>
+
+  <section class="section" id="quiz">
+    <div class="section-head"><span class="num">2</span><h2>过关 Quiz（QUIZ.md）</h2></div>
+    <div class="md-rendered" id="quiz-content">Loading…</div>
+  </section>
+
+  <footer>C-M4 · 执行页</footer>
+</div>
+
+<script type="text/markdown" id="md-doing"># C-M4 · Doing 任务详细规格
+
+> Topic：工具设计的取舍——粒度、schema、安全边界、限速。**只写文档**，不实现新 agent。
+>
+> 一个任务：`slack_agent_tools.md` 工具表 + 安全设计文档。
+
+---
+
+## 任务 1 · `slack_agent_tools.md`
+
+### 为什么做这个
+agent 表现好不好，一大半取决于你给它的工具设计得好不好——工具粒度太粗 model 容易调错参数，太细又得来回调好多次；schema 描述含糊 model 就会瞎填；写操作没有 dry-run 和限速保护，agent 一旦抽风就可能真把消息发出去、把单子建出来。这个练习不写代码，是逼你像审 API 一样审一套真实工具：哪个该拆细、哪个 schema 要补 example、哪个写操作是高风险得加护栏。把这套取舍想透，你设计任何 agent 工具时才不会埋下隐患。
+
+### 目标
+把工作中实际 Slack agent 用到的工具列出来；每个工具评估粒度合理性、schema 设计、read/write 安全边界、限速处理；标注哪些工具是高风险。
+
+### 必填结构
+
+#### 1.1 工具表
+对实际 Slack agent 的每个工具，列：
+| Tool name | Description | Schema | R/W | Risk | Rate limit |
+|---|---|---|---|---|---|
+| search_messages | search Slack channels | (query, channel?, time_range?) | R | L | 50/min |
+| get_thread | fetch full thread | (thread_ts, channel) | R | L | 100/min |
+| post_message | post to channel | (channel, text) | W | M | 1/sec/channel |
+| create_ticket | create JIRA from Slack | (project, title, body, assignee?) | W | **H** | 10/min |
+| ... | | | | | |
+
+#### 1.2 工具粒度审视
+对每个工具，回答：
+- 这个工具粒度对吗？粗了能省 round trip 但参数空间大、model 容易调错；细了调用次数多但每次决策简单
+- **经验法则**：高频常用动作粗一些（search_messages 一个工具就能 cover 多种 query）；低频危险动作细一些（create_ticket 拆成 `validate_ticket_params` + `create_ticket_with_validation`）
+
+#### 1.3 Schema 描述质量
+对每个工具，检查：
+- 每个参数有 `description` 吗？
+- 关键参数（channel name vs id, time format）有 1-2 个 example 吗？
+- enum 值用 `enum` 而不是用 description 列举吗？
+- 必填字段标 `required` 吗？
+
+#### 1.4 Read vs Write 边界
+- 把 R 工具和 W 工具分开列，W 工具单独标注：
+  - 是否有 dry-run mode？（write 工具必须支持 `dry_run: bool` 参数返回"会做什么但不真做"）
+  - 是否有 confirmation step？（W 工具调用前最好让 agent 复述意图、用户/supervisor 确认）
+  - 失败回滚？
+
+#### 1.5 限速 / Quota
+- 对每个 W 工具，标注 Slack API rate limit
+- 工具内部应该做指数退避（hit 429 时 sleep + retry）
+- **关键**：不要让 model 看到 429 错误（让它误以为该换工具）；host 侧拦截、retry transparently
+
+### Code review checkpoint
+- 至少有一个工具被标注 "粒度可能要拆细"——不要全 rationalize 现状
+- 所有 W 工具都有 dry-run mode 设计 / 或明确说"目前没有，是 risk"
+- 至少一个工具有 schema description 改进建议（"原始 description 不够 → 改成 X"）
+
+### 失败排查
+- **工具表不到 5 个**：Slack agent 还太初级；多列几个常见操作即使没实现（search_users、archive_channel）也算工具设计思考
+- **Risk 列全 L**：危险——用户能创建 ticket / 发消息都是 M+；想清楚什么算 risk
+
+### 辅助阅读（非 canonical）
+- Slack API rate limits：https://api.slack.com/apis/rate-limits
+- Anthropic tool description best practices：https://docs.claude.com/en/docs/agents-and-tools/tool-use/overview
+
+### Deliverable
+- `course-c/m4-slack-tools/slack_agent_tools.md`（脱敏版可放公开 repo）
+- 也可在项目内 `docs/tools.md` 放真实版
+
+---
+
+## 任务做完之后
+
+- 跑 QUIZ.md（轻量）
+- C-M4 过关 → 课程 C 完成 → learn-llm-by-doing 项目完整
+</script>
+<script type="text/markdown" id="md-quiz"># C-M4 · 知识自查口试
+
+> 验证工具设计取舍是否吃透。轻量模块、6 题足够。30 秒内答得出 = 过。
+
+---
+
+1. **粗工具 vs 细工具，怎么选？**
+   - 想点：粗 = 省 round trip 但参数空间大、调错率高；细 = 调用次数多但每次决策简单；高频常用动作粗一些、低频危险动作细一些（强制 model 多步确认）
+
+2. **Schema description 对 model 调用准确率影响多大？怎么写好？**
+   - 想点：影响很大——参数加 description + 1-2 个 example 能减少 50%+ 参数错误；关键值用 `enum`、不要用 description 列举
+
+3. **Read 工具 vs Write 工具的安全边界怎么设计？**
+   - 想点：Write 工具必须有 (a) dry-run mode（参数 `dry_run: bool` 返回"会做什么但不真做"）；(b) confirmation step（调用前让 agent 复述意图）；(c) 最小权限 IAM；(d) 调用 trace 可审计；不要让 model 直接做不可逆 W 操作
+
+4. **Slack API rate limit 怎么处理？为什么不能让 model 看到 429？**
+   - 想点：工具内部做指数退避（hit 429 sleep + retry）；让 model 看到 429 它会以为该换工具或放弃；host 侧拦截 transparent retry、最多在 retry N 次后才把 "rate limited" 暴露给 model
+
+5. **你 Slack agent 里哪个工具最容易被误用？怎么设防？**
+   - 想点：通常是 `create_ticket` / `post_message` 这类 W 工具；设防：(a) dry-run + confirmation；(b) 最小权限（只能创建特定 project / 发到指定 channel）；(c) 限频；(d) audit log
+
+6. **如果一个工具的调用错误率特别高（如 model 总传错 channel name），怎么办？**
+   - 想点：(1) 拆细——分成 `list_channels` + `post_to_channel(channel_id)`、强制先查 id；(2) schema 加 `description: "Use channel ID (C0123...), not channel name"`；(3) 工具内部 fallback——传 name 时自动转 id；(4) 高频错的 case 加进 system prompt 例子
+
+---
+
+## 自查标准
+
+- 6 题里 ≥ 5 题答得出 → C-M4 过关 → 课程 C 完成 → learn-llm-by-doing 全部模块完成
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script>
+  if (window.marked) {
+    marked.setOptions({ breaks: false, gfm: true });
+    document.getElementById('doing-content').innerHTML =
+      marked.parse(document.getElementById('md-doing').textContent);
+    document.getElementById('quiz-content').innerHTML =
+      marked.parse(document.getElementById('md-quiz').textContent);
+  }
+</script>
+
+</body>
+</html>

@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>C-M3 · Single-agent vs Multi-agent 对照实验 — learn-llm-by-doing</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #ffffff; --bg-soft: #fafafa; --fg: #111111; --fg-2: #2a2a2a;
+    --muted: #6a6a6a; --border: #e2e2e2; --border-strong: #111111; --accent: #c0392b;
+    --sans: 'IBM Plex Sans', -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    --mono: 'IBM Plex Mono', ui-monospace, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0e0e0e; --bg-soft: #161616; --fg: #e8e8e8; --fg-2: #c4c4c4;
+      --muted: #888888; --border: #2a2a2a; --border-strong: #e8e8e8; --accent: #e57367; }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; font-family: var(--sans); background: var(--bg); color: var(--fg); line-height: 1.7; font-size: 15px; -webkit-font-smoothing: antialiased; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code { font-family: var(--mono); background: var(--bg-soft); padding: 1px 5px; border-radius: 2px; font-size: 0.9em; }
+  ::selection { background: var(--accent); color: var(--bg); }
+  .layout { max-width: 880px; margin: 0 auto; padding: 32px 32px 60px; }
+  .back { font-family: var(--mono); font-size: 12px; color: var(--muted); display: inline-block; margin-bottom: 16px; padding: 4px 8px; border: 1px solid var(--border); }
+  .back:hover { color: var(--accent); border-color: var(--accent); text-decoration: none; }
+  .module-head { display: flex; align-items: baseline; gap: 12px; padding-bottom: 10px; border-bottom: 2px solid var(--border-strong); margin-bottom: 16px; flex-wrap: wrap; }
+  .module-head .code { font-family: var(--mono); font-size: 13px; color: var(--accent); font-weight: 500; letter-spacing: 0.03em; }
+  .module-head h1 { font-size: 24px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+  .topic { padding: 12px 14px; background: var(--bg-soft); border-left: 2px solid var(--accent); font-size: 13px; line-height: 1.65; color: var(--fg-2); margin: 0 0 24px 0; }
+  .topic .label { font-family: var(--mono); font-size: 10px; color: var(--accent); letter-spacing: 0.06em; font-weight: 500; margin-right: 6px; }
+  .section { margin: 32px 0; }
+  .section-head { display: flex; align-items: baseline; gap: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--border-strong); margin-bottom: 16px; }
+  .section-head .num { font-family: var(--mono); font-size: 11px; color: var(--muted); letter-spacing: 0.04em; }
+  .section-head h2 { font-size: 17px; font-weight: 600; margin: 0; letter-spacing: -0.005em; }
+  .setup h4 { font-family: var(--mono); font-size: 11px; color: var(--muted); letter-spacing: 0.05em; margin: 14px 0 6px 0; font-weight: 500; }
+  .setup h4:first-child { margin-top: 0; }
+  .setup ul { margin: 0; padding-left: 22px; font-size: 14px; line-height: 1.7; }
+  .setup li { margin-bottom: 4px; }
+  .nav-pills { display: flex; gap: 8px; padding: 8px 0; margin-bottom: 16px; position: sticky; top: 0; background: var(--bg); z-index: 10; border-bottom: 1px solid var(--border); }
+  .nav-pills a { font-family: var(--mono); font-size: 11px; padding: 6px 10px; border: 1px solid var(--border); color: var(--muted); letter-spacing: 0.04em; }
+  .nav-pills a:hover { color: var(--accent); border-color: var(--accent); text-decoration: none; }
+
+  /* Markdown rendered */
+  .md-rendered { font-size: 14px; line-height: 1.7; color: var(--fg-2); }
+  .md-rendered h1 { display: none; }
+  .md-rendered h2 { font-size: 16px; font-weight: 600; color: var(--fg); margin: 22px 0 10px 0; padding-bottom: 6px; border-bottom: 1px solid var(--border-strong); letter-spacing: -0.005em; }
+  .md-rendered h3 { font-size: 14px; font-weight: 600; color: var(--fg); margin: 16px 0 8px 0; font-family: var(--mono); letter-spacing: 0.02em; }
+  .md-rendered h4 { font-family: var(--mono); font-size: 11px; color: var(--muted); letter-spacing: 0.05em; margin: 12px 0 4px 0; font-weight: 500; }
+  .md-rendered p { margin: 8px 0; }
+  .md-rendered ul, .md-rendered ol { margin: 6px 0 10px 0; padding-left: 24px; }
+  .md-rendered li { margin-bottom: 4px; }
+  .md-rendered ul ul, .md-rendered ol ol { margin: 4px 0; }
+  .md-rendered blockquote { margin: 10px 0; padding: 10px 14px; border-left: 2px solid var(--muted); background: var(--bg-soft); color: var(--fg-2); font-size: 13.5px; }
+  .md-rendered blockquote p { margin: 4px 0; }
+  .md-rendered code { font-family: var(--mono); background: var(--bg-soft); padding: 1px 5px; border-radius: 2px; font-size: 0.88em; color: var(--fg); }
+  .md-rendered pre { background: var(--bg-soft); border: 1px solid var(--border); padding: 12px 14px; overflow-x: auto; font-size: 12.5px; line-height: 1.55; margin: 10px 0; }
+  .md-rendered pre code { background: transparent; padding: 0; font-size: 12.5px; }
+  .md-rendered a { color: var(--accent); border-bottom: 1px solid currentColor; word-break: break-word; }
+  .md-rendered a:hover { background: var(--accent); color: var(--bg); text-decoration: none; }
+  .md-rendered strong { color: var(--fg); font-weight: 600; }
+  .md-rendered table { border-collapse: collapse; margin: 10px 0; font-size: 13px; width: 100%; }
+  .md-rendered th, .md-rendered td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; vertical-align: top; }
+  .md-rendered th { background: var(--bg-soft); font-family: var(--mono); font-size: 11px; color: var(--muted); font-weight: 500; }
+  .md-rendered hr { border: none; border-top: 1px solid var(--border); margin: 18px 0; }
+  footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--border); font-size: 12px; color: var(--muted); font-family: var(--mono); }
+</style>
+</head>
+<body>
+
+<div class="layout">
+  <a href="index.html#c-m3" class="back">← 回索引</a>
+  
+  <div class="module-head">
+    <span class="code">C·M3</span>
+    <h1>Single-agent vs Multi-agent 对照实验</h1>
+  </div>
+  <div class="topic"><span class="label">TOPIC</span>在公开 benchmark（SWE-bench Lite 子集 / HumanEval / 自定义任务）上严格控制变量跑 single-agent vs multi-agent，给出 (cost, latency, success rate) 三元组。这是简历版加菜——让你能在面试讲"我做过实验，数据告诉我 multi-agent 不是银弹，X 类型任务才该拆"。</div>
+
+  <nav class="nav-pills">
+    <a href="#setup">0 · 环境准备</a>
+    <a href="#doing">1 · Doing 任务</a>
+    <a href="#quiz">2 · 过关 Quiz</a>
+  </nav>
+
+  <section class="section" id="setup">
+    <div class="section-head"><span class="num">0</span><h2>环境准备</h2></div>
+    <div class="setup">
+<h4>快速 setup</h4>
+<ul>
+<li>实例：<code>t3.medium</code>（CPU；SWE-bench 跑 docker 测试需要 <code>t3.large</code>/<code>t3.xlarge</code> 内存大点）</li>
+<li>装包：<code>pip install anthropic swebench</code>（如选 SWE-bench Lite）</li>
+<li>数据：SWE-bench Lite 子集 https://huggingface.co/datasets/princeton-nlp/SWE-bench_Lite（300 个 task；选 30–50 个跑 demo）</li>
+<li>💰 <strong>主要成本是 API token 不是机器</strong>：~$50/轮（Claude Sonnet × 30 task × ~3 万 tokens）。这是 C 课程唯一显著花钱处</li>
+<li>仓库布局：单独的 public repo <code>multi-agent-vs-single</code>（这是简历版，公开发）</li>
+<li>启动：<code>python single_agent_baseline.py --task swebench-lite-30</code>，<code>python multi_agent.py --task swebench-lite-30</code></li>
+</ul>
+<h4>值得理解</h4>
+<ul>
+<li><strong>任务选择</strong>：SWE-bench 是金标准但执行环境复杂（要起 docker 跑测试）；如果嫌重，选 HumanEval / MBPP / 自定义 codegen 任务也行——核心是<strong>任务足够开放、可量化判分</strong></li>
+<li><strong>公平对比</strong>：同 model、同 tools、同输入、同 eval；唯一变量是"single vs multi"</li>
+<li><strong>三元组对比</strong>（cost, latency, success rate）缺一不可——只比成功率会让 multi-agent 看起来纯赢，但忽略它贵 3–5×、慢 2–3×</li>
+<li><strong>结果可能反直觉</strong>：很多任务 single-agent 配好工具就够了，multi-agent 反而因 handoff 损耗更慢更差。<strong>这是好结论</strong>——面试讲"我做了实验，发现 multi-agent 不是银弹，X 类型任务才该拆"</li>
+<li><strong>避免 eval 泄漏</strong>：如果用公开 benchmark，确认 model 训练数据可能包含——这是写 README 必须 disclaimer 的事情</li>
+</ul>
+    </div>
+  </section>
+
+  <section class="section" id="doing">
+    <div class="section-head"><span class="num">1</span><h2>Doing 任务（DOING.md）</h2></div>
+    <div class="md-rendered" id="doing-content">Loading…</div>
+  </section>
+
+  <section class="section" id="quiz">
+    <div class="section-head"><span class="num">2</span><h2>过关 Quiz（QUIZ.md）</h2></div>
+    <div class="md-rendered" id="quiz-content">Loading…</div>
+  </section>
+
+  <footer>C-M3 · 执行页</footer>
+</div>
+
+<script type="text/markdown" id="md-doing"># C-M3 · Doing 任务详细规格
+
+> Topic：公开 benchmark 上严格控制变量跑 single vs multi、给三元组 (cost, latency, success rate)。简历版加菜、走自己时间。
+>
+> 三个任务：选 task / 实现两个 agent / 实验报告。
+
+### 任务选择
+**推荐 SWE-bench Lite 子集（30-50 个 task）**——金标准、有 docker-based eval；嫌重选 HumanEval / MBPP / 自定义 codegen。核心要求：**任务足够开放、可量化判分**。
+
+---
+
+## 任务 1 · 选 task + 准备数据
+
+### 为什么做这个
+要想用真实数据说"single agent 还是 multi-agent 更好"，得先有一批公开、可量化判分的任务，否则结论就只是个人感觉。选对 benchmark 很关键：任务要足够开放（不然分不出架构差异）、又要能自动判对错（不然没法跑几十条算成功率）。另外公开 benchmark 可能被训练数据污染过，提前把这个风险写清楚，免得最后数字好看却经不起追问。
+
+### Sub-tasks
+1. 选 benchmark：
+   - **SWE-bench Lite**：300 个 task、有 docker eval；选 30-50 跑 demo
+   - **HumanEval**：164 个 codegen task、轻量 unittest eval
+   - **自定义 codegen**：自己设计 30 个 task + reference solution + test cases；适合"想避免 eval 泄漏"
+2. 数据下载：`pip install swebench` 或 HuggingFace `princeton-nlp/SWE-bench_Lite`
+3. **eval 泄漏 disclaimer**：公开 benchmark 训练数据可能 contaminate；写在 README
+
+### Deliverable
+- `course-c/m3-comparison/dataset/` （benchmark 子集）
+- `course-c/m3-comparison/data_disclaimer.md`：用了什么 benchmark、可能 contamination 风险
+
+---
+
+## 任务 2 · `single_agent_baseline.py` + `multi_agent.py`
+
+### 为什么做这个
+"multi-agent 更强"这种话谁都会说，但要拿出可信的对比数据，关键在严格控制变量：同 model、同工具、同输入、同判分标准，唯一不同的只有架构本身。只要有一个变量没控住，别人就能说你的结论是噪声。亲手把两个实现的变量对齐，你才会真正体会到"做一个站得住脚的对照实验有多难"——这正是这条加菜线想给你的真实数据底气。
+
+### 目标
+两个实现严格控制变量——同 model / 同 tools / 同输入 / 同 eval；唯一变量是"single vs multi"。
+
+### Sub-tasks
+
+#### 2.1 `single_agent_baseline.py`
+- 一个 agent + 全部工具（read_file / list_dir / run_shell / write_file / run_tests）
+- 用 C-M0 的 mini_agent 模板扩展
+- 主循环：直接给 task → agent loop tool use 直到 stop → 拿结果
+
+#### 2.2 `multi_agent.py`
+- 把该 multi-agent 项目（API 文档 → DAG）的拆分思路迁移到本任务，例如 codegen 拆：
+  - **Planner agent**：read task → 拆成 subtask plan
+  - **Coder agent**：read plan → 写代码
+  - **Reviewer agent**：read code → 跑 test → 决定 accept / send back
+- 同样的 tool set
+- Handoff 用 schema（C-M1 的设计）
+
+#### 2.3 控制变量 checklist
+- 同 model (claude-sonnet-4-6 都用)
+- 同 tools（同 schema、同 implementation）
+- 同 input format
+- 同 eval（task 完成 = test pass）
+- 唯一区别：架构（single vs multi）
+
+#### 2.4 Cost 监控
+- 每次 API call 后累计 `input_tokens + output_tokens`
+- 算成本：input × $3/MT + output × $15/MT（Claude Sonnet 4.6 价格、查最新）
+- 30 个 task × ~3 万 tokens = ~$50 一轮（合理预算）
+
+### 成功标准
+- 两个实现都跑通 ≥ 80% task（不挂掉）
+- Cost 监控数字给出
+- 控制变量 checklist 在 README 列清楚
+
+### 失败排查
+- **single agent 一直循环不停**：max_iterations 太小或 task 太难；不要无限重试，过 N 次就标 failed
+- **multi agent handoff 失败**：handoff schema 写不严格；用 Pydantic + try/except 让 sender 看到 schema validation error 自己 fix
+- **cost 飙到 $200+**：可能 multi agent 死循环（C-M1 题 6 提到的 (A,B) 来回）；加回环检测
+
+### 辅助阅读（非 canonical）
+- SWE-bench README：https://github.com/princeton-nlp/SWE-bench
+- Anthropic API pricing：https://www.anthropic.com/pricing
+- HumanEval：https://github.com/openai/human-eval
+
+### Deliverable
+- `course-c/m3-comparison/single_agent_baseline.py`
+- `course-c/m3-comparison/multi_agent.py`
+- `course-c/m3-comparison/run_experiment.sh`：一键跑两个 agent on N tasks
+
+---
+
+## 任务 3 · `experiment_report.md`
+
+### 为什么做这个
+跑完实验只是攒了一堆数字，真正值钱的是把它们浓缩成一个有数据支撑的判断：什么样的任务该拆成 multi-agent、什么样的单 agent 加好工具就够了。这一页报告逼你给出 (成本, 延迟, 成功率) 三元组对比，并诚实标明 sample size 和泄漏等局限。哪怕结论是"single 赢了"也很好——能拿出实验数据说"multi-agent 不是银弹"，比空喊口号有说服力得多。
+
+### 目标
+≤ 1 页的报告：结论 + 一张表 + 一段 trade-off 分析。这是简历直接附的一页。
+
+### 结构
+```markdown
+# Single-agent vs Multi-agent on SWE-bench Lite (N tasks)
+
+## 实验设置
+- model: claude-sonnet-4-6
+- tasks: 30 from SWE-bench Lite
+- tools: read_file, list_dir, run_shell, write_file, run_tests
+- 唯一变量: 架构（1 agent 全工具 / 3 agent 拆分）
+
+## 结果
+
+| Metric | Single | Multi | Δ |
+|---|---|---|---|
+| Success rate | 50% | 53% | +6% |
+| Avg cost / task | $0.40 | $1.20 | 3× |
+| Avg latency / task | 30s | 90s | 3× |
+
+## 分析
+- Multi 赢的 case 主要在...
+- Multi 输的 case 主要在 (短 task、handoff overhead 占比大、planner 拆出错误的 subtask 后 coder 一路错下去)
+- 哪种 task 该拆: 长 / 复杂 / 多步骤推理
+- 哪种 task 不该拆: 短 / 单步 / 工具集小
+
+## 局限
+- N=30 sample size 风险
+- Eval 泄漏可能（SWE-bench 公开）
+- 单一 model；其他 model 结论可能不同
+
+## 结论
+"Multi-agent is not a free win. For X type tasks, it pays off; for Y type, single-agent + good tools wins."
+```
+
+### 成功标准
+- ≤ 1 页（约 500 字）
+- 三元组对比表给出
+- 分析部分指出"哪种 task 该拆 / 哪种不该拆"——这是面试可讲的核心
+- **结果可能是 single 赢——这是好结论**；面试讲"我做了实验、发现 multi-agent 不是银弹"
+
+### Deliverable
+- `course-c/m3-comparison/experiment_report.md`
+
+---
+
+## 三个任务做完之后
+
+- 跑 QUIZ.md
+- C-M3 过关 → 简历版加菜 done → 选做 C-M4（Slack agent 工具设计）
+</script>
+<script type="text/markdown" id="md-quiz"># C-M3 · 知识自查口试
+
+> 验证公平对比 / multi-agent 输了的归因 / cost-benefit 决策是否吃透。30 秒内答得出 = 过。
+
+---
+
+## 公平对比（对应任务 2.3）
+
+1. **Single vs multi agent 公平对比的控制变量是什么？**
+   - 想点：(1) 同 model；(2) 同 tools（schema + 实现）；(3) 同 input format；(4) 同 eval；唯一变量是架构（single agent / multi agent）
+
+2. **如果你 multi-agent 用了 GPT-4 而 single 用了 Claude——结果可信吗？**
+   - 想点：不可信——结果差异可能来自 model 本身、不是架构；公平对比必须同 model
+
+3. **三元组 (cost, latency, success rate) 缺一不可——为什么不能只比 success rate？**
+   - 想点：多 agent 通常 success rate 高一点点 + cost 3× + latency 3×；只比 success rate 看起来纯赢、忽略代价；产品决策要看 cost / latency 是否在阈值内
+
+---
+
+## Multi-agent 输了的归因（对应任务 3）
+
+4. **如果 multi-agent success rate 输给 single——可能的原因有哪几类？**
+   - 想点：(1) 拆分本身错了（agent 边界不合理、handoff 信息损失）；(2) 哪个 agent 是瓶颈（planner 拆错 subtask → coder 一路错）；(3) handoff overhead 在短 task 上占比大；(4) prompt 没调好（每个 agent 的 prompt 都独立、需要单独优化）
+
+5. **怎么定位是哪个 agent 是瓶颈？**
+   - 想点：(1) trajectory eval 看每个 agent 的 step 合理率；(2) 失败 case 复盘 trace、看从哪一步开始走偏；(3) ablation：去掉某个 agent 用 single 替换、看结果变化
+
+6. **如果 multi-agent 在长复杂 task 上赢、短简单 task 上输——结论是什么？**
+   - 想点：multi-agent 是 tooled-up overhead——overhead 摊到长 task 上 ROI 高、短 task 上 ROI 低；选用决策应该按 task 复杂度分流；这是面试讲故事的核心
+
+---
+
+## Eval 泄漏（对应任务 1）
+
+7. **公开 benchmark（SWE-bench / HumanEval）有 contamination 风险——为什么？怎么 disclaimer？**
+   - 想点：model 训练数据可能包含 benchmark；模型见过题目 → 不公平；disclaimer：在 README 注明用了什么 benchmark、可能 contamination；理想做法是搭配自定义 holdout 任务对照
+
+8. **怎么减少 contamination 影响？**
+   - 想点：(1) 自定义任务作 holdout（你的该项目本身就是）；(2) 公开 benchmark 加扰动（修改 prompt / 测例）；(3) 看相对差距（multi vs single 的差不会因为 contamination 变化）
+
+---
+
+## Cost / Benefit 决策（对应任务 3）
+
+9. **multi-agent 比 single 慢 3× / 贵 3× / 但 success rate 高 5%——值不值？**
+   - 想点：看场景；(a) 高 stake low frequency（生产代码、医疗）→ 值；(b) 低 stake high frequency（chat、推荐）→ 不值；(c) 看 latency 是否在用户感知阈值内（chat < 2s 是死线）；不要套统一答案
+
+10. **如果只能再优化一项 single 或 multi，你优化哪个？为什么？**
+    - 想点：先看哪个有更大优化空间——success rate 差距小（< 5%）但 cost / latency 差距大 → 优化 multi 的 overhead（handoff overhead / scheduling）；success rate 差距大 → 优化 single 的工具集 / prompt
+
+---
+
+## Sample Size & 统计（对应任务 1 + 3）
+
+11. **N=30 task 的 success rate 80% 给的 95% CI 大概多宽？这意味着什么？**
+    - 想点：±14% 量级（Wilson interval）；意思是 multi 比 single 高 5% 完全可能是噪声；面试讲故事 N=30 够、要主动说"我意识到 sample 风险、production 部署会扩到 ≥ 200"
+
+12. **如果你只能跑 N=30，怎么提高结果可信度？**
+    - 想点：(1) 多次实验（每个 task 跑 3 次取多数）→ 减少 model 随机性；(2) by_tag 分析（看简单 / 复杂 task 各自结论）；(3) 指明置信区间；(4) 不下绝对结论——讲"我看到 X 趋势、还需要更多数据"
+
+---
+
+## 综合（覆盖整个 C-M3）
+
+13. **面试官问"这个实验的 cost 大概多少、值不值"——你怎么答？**
+    - 想点：cost ~$50（30 task × 3 万 tokens × $15/MT output）；值 = 我学到了 (a) 公平对比的控制变量；(b) multi 不是银弹的实证；(c) 哪种 task 该拆的判断；这是简历直接附的一页
+
+14. **如果你的实验结论是 single 全面赢——这对该 multi-agent 项目（API 文档 → DAG）有什么 implication？**
+    - 想点：(a) 检视当前架构是不是过度拆分；(b) 该项目任务复杂度是不是和实验任务可比；(c) 不一定 1:1 迁移、但是个 prior，应该重新审视 split_decisions.md（C-M1）；学习闭环：实验 → 影响架构决策 → 改进 → 重做实验
+
+---
+
+## 自查标准
+
+- 14 题里 ≥ 11 题 30 秒内答得出 → C-M3 过关
+- 题 4-6（multi 输了的归因）和 题 9-10（cost-benefit）必答好
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script>
+  if (window.marked) {
+    marked.setOptions({ breaks: false, gfm: true });
+    document.getElementById('doing-content').innerHTML =
+      marked.parse(document.getElementById('md-doing').textContent);
+    document.getElementById('quiz-content').innerHTML =
+      marked.parse(document.getElementById('md-quiz').textContent);
+  }
+</script>
+
+</body>
+</html>

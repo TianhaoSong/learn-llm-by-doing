@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>C-M0 · Agent 基础与工具使用 — learn-llm-by-doing</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #ffffff; --bg-soft: #fafafa; --fg: #111111; --fg-2: #2a2a2a;
+    --muted: #6a6a6a; --border: #e2e2e2; --border-strong: #111111; --accent: #c0392b;
+    --sans: 'IBM Plex Sans', -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    --mono: 'IBM Plex Mono', ui-monospace, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0e0e0e; --bg-soft: #161616; --fg: #e8e8e8; --fg-2: #c4c4c4;
+      --muted: #888888; --border: #2a2a2a; --border-strong: #e8e8e8; --accent: #e57367; }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; font-family: var(--sans); background: var(--bg); color: var(--fg); line-height: 1.7; font-size: 15px; -webkit-font-smoothing: antialiased; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code { font-family: var(--mono); background: var(--bg-soft); padding: 1px 5px; border-radius: 2px; font-size: 0.9em; }
+  ::selection { background: var(--accent); color: var(--bg); }
+  .layout { max-width: 880px; margin: 0 auto; padding: 32px 32px 60px; }
+  .back { font-family: var(--mono); font-size: 12px; color: var(--muted); display: inline-block; margin-bottom: 16px; padding: 4px 8px; border: 1px solid var(--border); }
+  .back:hover { color: var(--accent); border-color: var(--accent); text-decoration: none; }
+  .module-head { display: flex; align-items: baseline; gap: 12px; padding-bottom: 10px; border-bottom: 2px solid var(--border-strong); margin-bottom: 16px; flex-wrap: wrap; }
+  .module-head .code { font-family: var(--mono); font-size: 13px; color: var(--accent); font-weight: 500; letter-spacing: 0.03em; }
+  .module-head h1 { font-size: 24px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+  .topic { padding: 12px 14px; background: var(--bg-soft); border-left: 2px solid var(--accent); font-size: 13px; line-height: 1.65; color: var(--fg-2); margin: 0 0 24px 0; }
+  .topic .label { font-family: var(--mono); font-size: 10px; color: var(--accent); letter-spacing: 0.06em; font-weight: 500; margin-right: 6px; }
+  .section { margin: 32px 0; }
+  .section-head { display: flex; align-items: baseline; gap: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--border-strong); margin-bottom: 16px; }
+  .section-head .num { font-family: var(--mono); font-size: 11px; color: var(--muted); letter-spacing: 0.04em; }
+  .section-head h2 { font-size: 17px; font-weight: 600; margin: 0; letter-spacing: -0.005em; }
+  .setup h4 { font-family: var(--mono); font-size: 11px; color: var(--muted); letter-spacing: 0.05em; margin: 14px 0 6px 0; font-weight: 500; }
+  .setup h4:first-child { margin-top: 0; }
+  .setup ul { margin: 0; padding-left: 22px; font-size: 14px; line-height: 1.7; }
+  .setup li { margin-bottom: 4px; }
+  .nav-pills { display: flex; gap: 8px; padding: 8px 0; margin-bottom: 16px; position: sticky; top: 0; background: var(--bg); z-index: 10; border-bottom: 1px solid var(--border); }
+  .nav-pills a { font-family: var(--mono); font-size: 11px; padding: 6px 10px; border: 1px solid var(--border); color: var(--muted); letter-spacing: 0.04em; }
+  .nav-pills a:hover { color: var(--accent); border-color: var(--accent); text-decoration: none; }
+
+  /* Markdown rendered */
+  .md-rendered { font-size: 14px; line-height: 1.7; color: var(--fg-2); }
+  .md-rendered h1 { display: none; }
+  .md-rendered h2 { font-size: 16px; font-weight: 600; color: var(--fg); margin: 22px 0 10px 0; padding-bottom: 6px; border-bottom: 1px solid var(--border-strong); letter-spacing: -0.005em; }
+  .md-rendered h3 { font-size: 14px; font-weight: 600; color: var(--fg); margin: 16px 0 8px 0; font-family: var(--mono); letter-spacing: 0.02em; }
+  .md-rendered h4 { font-family: var(--mono); font-size: 11px; color: var(--muted); letter-spacing: 0.05em; margin: 12px 0 4px 0; font-weight: 500; }
+  .md-rendered p { margin: 8px 0; }
+  .md-rendered ul, .md-rendered ol { margin: 6px 0 10px 0; padding-left: 24px; }
+  .md-rendered li { margin-bottom: 4px; }
+  .md-rendered ul ul, .md-rendered ol ol { margin: 4px 0; }
+  .md-rendered blockquote { margin: 10px 0; padding: 10px 14px; border-left: 2px solid var(--muted); background: var(--bg-soft); color: var(--fg-2); font-size: 13.5px; }
+  .md-rendered blockquote p { margin: 4px 0; }
+  .md-rendered code { font-family: var(--mono); background: var(--bg-soft); padding: 1px 5px; border-radius: 2px; font-size: 0.88em; color: var(--fg); }
+  .md-rendered pre { background: var(--bg-soft); border: 1px solid var(--border); padding: 12px 14px; overflow-x: auto; font-size: 12.5px; line-height: 1.55; margin: 10px 0; }
+  .md-rendered pre code { background: transparent; padding: 0; font-size: 12.5px; }
+  .md-rendered a { color: var(--accent); border-bottom: 1px solid currentColor; word-break: break-word; }
+  .md-rendered a:hover { background: var(--accent); color: var(--bg); text-decoration: none; }
+  .md-rendered strong { color: var(--fg); font-weight: 600; }
+  .md-rendered table { border-collapse: collapse; margin: 10px 0; font-size: 13px; width: 100%; }
+  .md-rendered th, .md-rendered td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; vertical-align: top; }
+  .md-rendered th { background: var(--bg-soft); font-family: var(--mono); font-size: 11px; color: var(--muted); font-weight: 500; }
+  .md-rendered hr { border: none; border-top: 1px solid var(--border); margin: 18px 0; }
+  footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--border); font-size: 12px; color: var(--muted); font-family: var(--mono); }
+</style>
+</head>
+<body>
+
+<div class="layout">
+  <a href="index.html#c-m0" class="back">← 回索引</a>
+  
+  <div class="module-head">
+    <span class="code">C·M0</span>
+    <h1>Agent 基础与工具使用</h1>
+  </div>
+  <div class="topic"><span class="label">TOPIC</span>用最小化代码（≤ 200 行 raw API 循环、不用框架）实现 ReAct / tool use 的本质——model 输出结构化 tool call → host 执行 → 结果回写、循环直到 stop。理解 single-turn function call 与 multi-step agent loop 的区别、tool 失败如何处理、上下文如何管理。这是 C-M1 multi-agent 架构决策的前提。</div>
+
+  <nav class="nav-pills">
+    <a href="#setup">0 · 环境准备</a>
+    <a href="#doing">1 · Doing 任务</a>
+    <a href="#quiz">2 · 过关 Quiz</a>
+  </nav>
+
+  <section class="section" id="setup">
+    <div class="section-head"><span class="num">0</span><h2>环境准备</h2></div>
+    <div class="setup">
+<h4>快速 setup</h4>
+<ul>
+<li>实例：<code>t3.medium</code>（CPU，Agent 不吃 GPU，~$0.04/hr，几乎免费）；C 课程成本全在 API token 不在机器</li>
+<li>装包：<code>pip install anthropic</code> 或 <code>pip install openai</code>（或用 AWS Bedrock 走 boto3）</li>
+<li>API key：<code>.env</code> + <code>python-dotenv</code>；<strong>绝不写进代码</strong>（合规：API key 是凭据，按 production safety rule）</li>
+<li>仓库布局：<code>mkdir -p course-c/m0-mini-agent</code></li>
+<li>启动：<code>python mini_agent.py</code></li>
+</ul>
+<h4>值得理解</h4>
+<ul>
+<li><strong>tool use loop 的核心循环</strong>：(1) 把 tools schema 传进 API，(2) 拿到 model response，(3) 如果 <code>stop_reason == "tool_use"</code> → 执行 tool → 把结果作为 user turn 加回 messages → 回 (2)，(4) 如果 <code>stop_reason == "end_turn"</code> → 返回最终答案。<strong>这就是 ReAct 的实现，不要被框架(LangGraph 等)抽象掩盖</strong></li>
+<li><strong>不要用框架做 mini_agent</strong>：直接写 raw API 循环 ≤ 200 行，对理解 tool use 的本质最有帮助。框架（LangChain / LangGraph）留到看完原理再选用</li>
+<li><strong>trace logger 是面试可讲的内容</strong>：每一步 (tool, args, result, model_thought) 都落 jsonl；C-M2 eval 阶段会复用这套 log 做 trajectory 评估</li>
+<li><strong>tool 失败处理</strong>：把 exception stringify 后作为 tool result 回给 model——让它自己决定重试 / 换工具 / 放弃。<strong>不要在 host 侧 try/except 然后吞掉错误</strong></li>
+</ul>
+    </div>
+  </section>
+
+  <section class="section" id="doing">
+    <div class="section-head"><span class="num">1</span><h2>Doing 任务（DOING.md）</h2></div>
+    <div class="md-rendered" id="doing-content">Loading…</div>
+  </section>
+
+  <section class="section" id="quiz">
+    <div class="section-head"><span class="num">2</span><h2>过关 Quiz（QUIZ.md）</h2></div>
+    <div class="md-rendered" id="quiz-content">Loading…</div>
+  </section>
+
+  <footer>C-M0 · 执行页</footer>
+</div>
+
+<script type="text/markdown" id="md-doing"># C-M0 · Doing 任务详细规格
+
+> Topic：≤ 200 行 raw API 循环实现 ReAct / tool use 本质。不用 LangChain/LangGraph 框架——直接写 model → tool call → result → model 的循环。
+>
+> 两个任务：`mini_agent.py` + trace logger。
+
+---
+
+## 任务 1 · `mini_agent.py` — Raw API tool use 循环
+
+### 为什么做这个
+所有 agent 框架（LangChain、LangGraph、autogen）底下都是同一个循环：把任务给 model → model 说"我要调某个工具" → 你执行工具、把结果喂回去 → model 再决定下一步，直到它说"做完了"。框架把这个循环包了一层糖，你看不清里面发生了什么。自己用 raw API 手写一遍，你才会真正理解 ReAct 到底是什么、tool call 是 model 输出的一段结构化数据而不是什么魔法，以后调框架出问题时你知道往哪看。
+
+### 目标
+写一个 ≤ 200 行的 mini agent：单 agent + 3 个工具（read_file / list_dir / run_shell），跑"找出仓库里所有 TODO"任务。**不用框架**——直接调 Anthropic / OpenAI API。
+
+### Sub-tasks
+
+#### 1.1 环境
+```bash
+pip install anthropic python-dotenv  # 或 pip install openai
+```
+- API key 放 `.env`：`ANTHROPIC_API_KEY=...` 或 `OPENAI_API_KEY=...`
+- 用 `dotenv.load_dotenv()` 读
+- **绝不**写进代码 / commit；这是合规要求
+
+#### 1.2 定义 3 个工具（host 侧 Python 函数）
+```python
+TOOLS = [
+    {
+        "name": "read_file",
+        "description": "Read the content of a file.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"path": {"type": "string", "description": "File path"}},
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "list_dir",
+        "description": "List files in a directory.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"path": {"type": "string"}},
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "run_shell",
+        "description": "Run a shell command. Use cautiously.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"command": {"type": "string"}},
+            "required": ["command"],
+        },
+    },
+]
+
+def execute_tool(name, args):
+    try:
+        if name == "read_file":
+            return open(args["path"]).read()
+        elif name == "list_dir":
+            return "\n".join(os.listdir(args["path"]))
+        elif name == "run_shell":
+            return subprocess.check_output(args["command"], shell=True, text=True)
+    except Exception as e:
+        return f"Error: {e}"  # 失败也返回字符串、让 model 自己处理；不要 raise
+```
+
+#### 1.3 Agent 主循环
+```python
+import anthropic
+client = anthropic.Anthropic()
+
+def run_agent(task):
+    messages = [{"role": "user", "content": task}]
+    while True:
+        response = client.messages.create(
+            model="claude-sonnet-4-6",  # 或当时最新版
+            max_tokens=4096,
+            tools=TOOLS,
+            messages=messages,
+        )
+        # response.content 可能含 text + tool_use blocks
+        messages.append({"role": "assistant", "content": response.content})
+        
+        if response.stop_reason == "end_turn":
+            return final_text(response)
+        
+        if response.stop_reason == "tool_use":
+            tool_results = []
+            for block in response.content:
+                if block.type == "tool_use":
+                    result = execute_tool(block.name, block.input)
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": str(result),
+                    })
+            messages.append({"role": "user", "content": tool_results})
+            continue
+        
+        # 其他 stop_reason: max_tokens 等——根据情况处理
+        break
+```
+
+#### 1.4 跑 demo 任务
+- 调用：`run_agent("Find all TODO comments in the current directory and list which file they're in.")`
+- 预期 agent 会：list_dir → 看到 .py 文件 → read_file 几个 → run_shell `grep -r TODO .` → 返回结果
+
+#### 1.5 控制循环上限
+- 加 `max_iterations=20`，防止无限循环烧钱
+- 加 cost 估算：每次 API call 后打 `response.usage.input_tokens + output_tokens`，方便看烧了多少 token
+
+### 成功标准
+- ≤ 200 行代码（含注释）跑通"找 TODO"任务
+- 输出是 agent 调了几次 tool 后给出的 final answer，不是单次 API response
+- 不依赖 LangChain / LangGraph / autogen 等框架——只 import anthropic（或 openai）+ stdlib
+
+### 失败排查
+- **agent 一直循环不停**：max_iterations 没设；或者 model 一直返回 `tool_use` stop_reason 不收敛——通常是 task 太开放、tool description 不清楚；改 task 更具体
+- **tool 调用 args 错误**：`input_schema` 没设 required 或者 description 写得不清楚；改 description（如 `"path": {"type": "string", "description": "Absolute or relative path; pass current dir as '.'"}`）
+- **tool 失败后 agent 卡住**：execute_tool 不要 raise——必须返回字符串错误；让 model 看到 "Error: ..." 自己决定重试 / 换 tool / 放弃
+
+### 辅助阅读（非 canonical）
+- Anthropic tool use 的端到端示例：https://docs.claude.com/en/docs/agents-and-tools/tool-use/implement-tool-use
+- OpenAI function calling（如用 OpenAI）：https://platform.openai.com/docs/guides/function-calling
+
+### Deliverable
+- `course-c/m0-mini-agent/mini_agent.py`
+- 运行截图或输出贴在 `demo_output.md`
+
+---
+
+## 任务 2 · Trace logger
+
+### 为什么做这个
+agent 跟普通函数不一样：它每次跑的路径都可能不同，出问题时你光看最终输出根本不知道哪一步走歪了。把每一步（model 想了什么、调了哪个工具、工具返回了什么）都落成结构化日志，你才有办法事后复盘"它为什么绕了三圈"。而且这套 trace 格式后面做 eval 时要直接拿来用——你没法评估一个看不见过程的 agent。
+
+### 目标
+在工具调用上加一层 trace logger，每一步落 jsonl。这套 log 格式 C-M2 会复用做 trajectory eval。
+
+### Sub-tasks
+1. 加 `trace.py`：
+   ```python
+   import json, time
+   def log_step(trace_file, step_idx, step_type, payload):
+       record = {
+           "step": step_idx,
+           "type": step_type,  # "model_thought" | "tool_call" | "tool_result"
+           "ts": time.time(),  # 注意：实际项目不用 time.time()，用 datetime.utcnow().isoformat()
+           **payload,
+       }
+       with open(trace_file, "a") as f:
+           f.write(json.dumps(record) + "\n")
+   ```
+2. 在 `run_agent` 里每个关键节点调 `log_step`：
+   - 每次 model response 落 `model_thought`（response 里所有 text block 拼起来）
+   - 每次 tool 调用前落 `tool_call`（name + args）
+   - 每次 tool 返回后落 `tool_result`（result + duration）
+3. 一次 agent 跑完一个 `trace_<task_id>.jsonl`
+
+### 成功标准
+- 跑完 demo 任务后产出一个 jsonl，每行一个 step
+- 类型 (`model_thought` / `tool_call` / `tool_result`) 都至少出现一次
+- 时间戳 + duration 字段都有，方便后续算 latency
+
+### Deliverable
+- `course-c/m0-mini-agent/trace.py`
+- 一个示例 `trace_demo.jsonl`
+
+---
+
+## 两个任务做完之后
+
+- 跑 QUIZ.md
+- C-M0 过关 → 开 C-M1（Multi-agent 架构决策）
+</script>
+<script type="text/markdown" id="md-quiz"># C-M0 · 知识自查口试
+
+> 验证 ReAct 本质 / tool use 协议 / 错误处理是否吃透。30 秒内答得出 = 过。
+
+---
+
+## ReAct 与 Tool Use（对应任务 1）
+
+1. **ReAct 和直接 chain-of-thought 的区别是什么？什么时候必须用 ReAct？**
+   - 想点：CoT = model 自己 think → answer，纯文本；ReAct = think → act (tool call) → observe (tool result) → think → ...，循环；必须用 ReAct 的场景 = 答案依赖外部信息（文件 / API / database），model 内部没有
+
+2. **Tool use loop 的 4 个核心步骤是什么？**
+   - 想点：(1) 把 tools schema 传给 model；(2) model 返回 response、可能含 tool_use；(3) 如果 stop_reason="tool_use" → host 执行 tool → 把 result 当 user turn 加回 messages；(4) 回 (2)；如果 stop_reason="end_turn" → 返回最终答案
+
+3. **为什么用框架（LangGraph / LangChain）反而对学习有害？**
+   - 想点：框架把核心循环抽象掉、变成"配置 graph node"——表面上简洁，但隐藏了 tool use 的本质、调试时不知道发生了什么；ReAct 本质就是 200 行循环，自己写一遍才能讲清楚
+
+4. **Single-turn function call 与 multi-step agent loop 的差别是什么？**
+   - 想点：single-turn = 一次 API call、model 回一个 tool call、host 执行返回（如 OpenAI 早期 function calling）；multi-step = 循环、model 可以 tool call N 次直到 stop_reason="end_turn"；agent 必须 multi-step
+
+---
+
+## 错误处理（对应任务 1.5）
+
+5. **Tool 失败时 agent 应该怎么处理？为什么不能在 host 侧 try/except 吞掉错误？**
+   - 想点：把 exception stringify 后作为 tool_result 返回 → model 看到 "Error: ..." 自己决定重试 / 换 tool / 放弃 / 报告给用户；host 侧吞掉 → model 不知道失败了、可能继续基于错误前提推理
+
+6. **Agent 怎么避免无限循环？**
+   - 想点：(1) `max_iterations` 硬上限；(2) 检测 model 反复调同一 tool 同 args（probably 在死循环）；(3) cost cap（每个 task 限制总 token）；(4) 时间超时
+
+7. **Tool 调用 args 经常错（比如 path 错了），怎么减少错误率？**
+   - 想点：(1) tool description 写清晰、给 example；(2) input_schema 用 required + 严格 type；(3) 在 system prompt 里给行为指引（如"路径不确定时先 list_dir"）；(4) 错了让 model 自己看 result 改
+
+---
+
+## Context 管理（对应任务 1）
+
+8. **Agent loop 跑久了 messages 会无限增长——怎么办？**
+   - 想点：(1) 长输出 tool_result 截断（只保留前/后 N 行）；(2) 老 turn summarize 进 system prompt；(3) 关键决策用 structured output 落到外部（trace logger / state file）、context 里只留 reference；(4) 切到大 context window model
+
+9. **System prompt vs first user message vs tool description——agent 行为塑造各靠哪个？**
+   - 想点：system prompt = 角色 + 整体策略 + 不变的约束（"你是 X、必须 Y"）；first user message = 当前 task；tool description = 单个 tool 的语义和用法；调 prompt 时改对地方很关键
+
+---
+
+## Trace（对应任务 2）
+
+10. **Trace logger 为什么要落 jsonl 而不是 print log？**
+    - 想点：jsonl 结构化、方便后续 eval / 回放 / 调试；每行一个 record、可逐步 stream 写；C-M2 的 trajectory eval 直接吃这个格式
+
+11. **Trace 里至少要记哪几类 step？**
+    - 想点：(1) model_thought（每次 model 输出的 text）；(2) tool_call（name + args）；(3) tool_result（result + duration）；(4) 可选：cost (token 消耗)、final answer
+
+---
+
+## 自查标准
+
+- 11 题里 ≥ 9 题 30 秒内答得出 → C-M0 过关
+- 题 1-4（ReAct 本质）和 题 5-7（错误处理）必答好
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script>
+  if (window.marked) {
+    marked.setOptions({ breaks: false, gfm: true });
+    document.getElementById('doing-content').innerHTML =
+      marked.parse(document.getElementById('md-doing').textContent);
+    document.getElementById('quiz-content').innerHTML =
+      marked.parse(document.getElementById('md-quiz').textContent);
+  }
+</script>
+
+</body>
+</html>

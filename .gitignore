@@ -1,0 +1,14 @@
+# Training code + data + checkpoints + venv (personal; repo only ships courses/ + site/)
+course-a/
+course-b/
+course-c/
+
+# Build artifact
+site.zip
+
+# OS / editor
+.DS_Store
+.ipynb_checkpoints/
+__pycache__/
+
+docs/
