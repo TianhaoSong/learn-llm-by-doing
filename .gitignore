@@ -12,3 +12,6 @@ site.zip
 __pycache__/
 
 docs/
+
+# site/ is built by GitHub Actions, not tracked
+site/
