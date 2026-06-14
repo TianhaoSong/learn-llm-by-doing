@@ -1,9 +1,11 @@
 import re
+import shutil
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 COURSES = ROOT / "courses"
 MD = COURSES / "course-outlines.md"
+PRIMERS = COURSES / "primers"   # 手写的交互式 primer（HTML 源），build 时原样拷进 site/
 SITE = ROOT / "site"
 SITE.mkdir(exist_ok=True)
 INDEX_HTML = SITE / "index.html"
@@ -62,7 +64,8 @@ def parse_module(code):
     if readings_m:
         for line in readings_m.group(1).strip().split("\n"):
             line = line.strip("- ").strip()
-            url_m = re.match(r"(.+?):\s*(https?://\S+)", line)
+            # http(s) link, or a local relative page (e.g. nccl-primer.html#anchor)
+            url_m = re.match(r"(.+?):\s*(https?://\S+|[\w./-]+\.html(?:#[\w-]+)?)", line)
             if url_m:
                 readings.append((url_m.group(1).strip(), url_m.group(2).strip()))
             else:
@@ -476,5 +479,13 @@ for course, code, mod_dir, title in MODULES:
     out_path = SITE / f"{code.lower()}.html"
     out_path.write_text(page_html)
     print(f"  wrote {out_path.name} ({len(page_html)} bytes)")
+
+# ============= PRIMERS (copy手写交互页) =============
+# courses/primers/*.html 是手写的交互式 primer，build 时原样拷进 site/。
+# 这样 site/ 100% 是产物（可随时清空重建），所有源都在 courses/ 下。
+if PRIMERS.is_dir():
+    for p in sorted(PRIMERS.glob("*.html")):
+        shutil.copy2(p, SITE / p.name)
+        print(f"  copied primer {p.name} ({p.stat().st_size} bytes)")
 
 print("Done.")

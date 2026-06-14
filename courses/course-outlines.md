@@ -109,6 +109,7 @@
    - 知道 KV cache 在推理时长什么样（为线 2 埋伏笔）
 
 2. **学习材料（canonical）**
+   - 【先看这个 · 本课自制】GPT 形状地图（文本→tokenize→(B,T)→…→logits→采样→文本，端到端跟着 tensor.shape 走，每行锚定 mygpt/model.py 代码 + attention 真实数字）: gpt-shapes-primer.html
    - "Attention Is All You Need": https://arxiv.org/abs/1706.03762
    - Karpathy "Let's build GPT: from scratch, in code, spelled out": https://www.youtube.com/watch?v=kCc8FmEb1nY
    - nanoGPT repo: https://github.com/karpathy/nanoGPT
@@ -158,6 +159,7 @@
    - mixed precision（fp16/bf16）和 GradScaler 的工作原理；为什么多卡训练几乎一定要开
 
 2. **学习材料（canonical）**
+   - 【先看这个 · 本课自制】NCCL 可视化全解（物理实现 / 5 个集合原语逐步动画 / DDP·FSDP·TP 如何复用原语）: nccl-primer.html
    - PyTorch DDP tutorial: https://pytorch.org/tutorials/intermediate/ddp_tutorial.html
    - PyTorch DDP design note: https://pytorch.org/docs/stable/notes/ddp.html
    - NVIDIA NCCL docs (collective ops): https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/collectives.html
@@ -207,6 +209,7 @@
    - activation checkpointing 的 trade-off（compute ↔ memory）
 
 2. **学习材料（canonical）**
+   - 【本课自制 · 复习】NCCL 可视化全解之 FSDP 节（AllGather 取权重 + ReduceScatter 收梯度，看 AllReduce 如何被"拆开用"）: nccl-primer.html#fsdp
    - "ZeRO: Memory Optimizations Toward Training Trillion Parameter Models": https://arxiv.org/abs/1910.02054
    - PyTorch FSDP tutorial: https://pytorch.org/tutorials/intermediate/FSDP_tutorial.html
    - PyTorch FSDP advanced: https://pytorch.org/tutorials/intermediate/FSDP_advanced_tutorial.html
@@ -444,6 +447,7 @@
    - 与课程 A 的 FSDP 对比：训练 vs 推理的并行需求差异
 
 2. **学习材料（canonical）**
+   - 【本课自制 · 复习】NCCL 可视化全解之 TP 节（Megatron 列切/行切 MLP，一次前向只需 1 个 AllReduce）: nccl-primer.html#tp
    - "Megatron-LM: Training Multi-Billion Parameter Language Models Using Model Parallelism": https://arxiv.org/abs/1909.08053
    - vLLM distributed inference docs: https://docs.vllm.ai/en/latest/serving/distributed_serving.html
    - PyTorch Tensor Parallel API: https://pytorch.org/tutorials/intermediate/TP_tutorial.html

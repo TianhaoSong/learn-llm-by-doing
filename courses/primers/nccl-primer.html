@@ -1,0 +1,1081 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NCCL 全解 · 物理实现 / 集合原语 / DDP·FSDP·TP</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#080b10;
+  --ink2:#0d121b;
+  --panel:#0f1620;
+  --panel2:#131c28;
+  --line:#1f2c3a;
+  --line2:#2c3e52;
+  --fog:#5e7a92;
+  --txt:#c5d3e0;
+  --txt-dim:#7e92a6;
+  --txt-faint:#4f6071;
+  --lime:#c4f536;
+  --lime-dim:#8aa826;
+  --coral:#ff5d52;
+  --coral-dim:#b8403a;
+  --cyan:#3dd6d0;
+  --amber:#ffb13d;
+  --violet:#9d8cff;
+  --mono:'IBM Plex Mono',monospace;
+  --sans:'IBM Plex Sans',sans-serif;
+  --disp:'Syne',sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{
+  background:var(--ink);
+  color:var(--txt);
+  font-family:var(--sans);
+  line-height:1.65;
+  font-size:16px;
+  overflow-x:hidden;
+  background-image:
+    linear-gradient(rgba(44,62,82,.10) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(44,62,82,.10) 1px,transparent 1px);
+  background-size:42px 42px;
+}
+body::before{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:radial-gradient(ellipse 90% 60% at 50% -10%,rgba(196,245,54,.07),transparent 60%),
+             radial-gradient(ellipse 70% 50% at 90% 110%,rgba(255,93,82,.06),transparent 60%);
+}
+.wrap{position:relative;z-index:1;max-width:1180px;margin:0 auto;padding:0 28px}
+
+/* ---------- nav ---------- */
+.topbar{
+  position:sticky;top:0;z-index:50;backdrop-filter:blur(12px);
+  background:rgba(8,11,16,.82);border-bottom:1px solid var(--line);
+}
+.topbar .wrap{display:flex;align-items:center;justify-content:space-between;height:58px}
+.brand{font-family:var(--mono);font-weight:600;letter-spacing:.5px;font-size:14px;color:var(--txt)}
+.brand b{color:var(--lime)}
+.navlinks{display:flex;gap:4px;flex-wrap:wrap}
+.navlinks a{
+  font-family:var(--mono);font-size:12px;color:var(--txt-dim);text-decoration:none;
+  padding:6px 11px;border-radius:6px;border:1px solid transparent;transition:.18s;
+}
+.navlinks a:hover{color:var(--lime);border-color:var(--line2);background:var(--panel)}
+
+/* ---------- hero ---------- */
+.hero{padding:92px 0 64px;position:relative}
+.tagchip{
+  display:inline-flex;align-items:center;gap:8px;font-family:var(--mono);font-size:12px;
+  color:var(--lime);border:1px solid var(--lime-dim);border-radius:30px;padding:5px 14px;margin-bottom:26px;
+  background:rgba(196,245,54,.05);
+}
+.tagchip .dot{width:7px;height:7px;border-radius:50%;background:var(--lime);box-shadow:0 0 10px var(--lime);animation:pulse 1.8s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+h1.title{
+  font-family:var(--disp);font-weight:800;font-size:clamp(40px,7vw,82px);line-height:.98;
+  letter-spacing:-1.5px;color:#fff;margin-bottom:8px;
+}
+h1.title .g{color:var(--lime)}
+.subtitle{font-family:var(--mono);color:var(--txt-dim);font-size:15px;max-width:680px;margin-top:22px}
+.subtitle b{color:var(--coral)}
+.hero-meta{display:flex;gap:30px;margin-top:38px;flex-wrap:wrap}
+.hero-meta .m{font-family:var(--mono);font-size:12px;color:var(--txt-faint)}
+.hero-meta .m b{display:block;font-size:26px;color:var(--lime);font-weight:600;margin-bottom:2px;font-family:var(--disp)}
+
+/* ---------- sections ---------- */
+section{padding:68px 0;border-top:1px solid var(--line)}
+.sec-head{display:flex;align-items:baseline;gap:16px;margin-bottom:14px}
+.sec-num{font-family:var(--mono);font-size:13px;color:var(--coral);border:1px solid var(--coral-dim);border-radius:6px;padding:3px 9px;flex:none}
+h2{font-family:var(--disp);font-weight:700;font-size:clamp(26px,4vw,40px);color:#fff;letter-spacing:-.5px;line-height:1.05}
+.sec-lead{color:var(--txt-dim);max-width:760px;margin:14px 0 34px;font-size:15.5px}
+h3{font-family:var(--disp);font-weight:700;font-size:21px;color:#fff;margin:38px 0 14px;letter-spacing:-.3px}
+h3 .pill{font-family:var(--mono);font-size:11px;color:var(--ink);background:var(--lime);padding:2px 8px;border-radius:5px;vertical-align:middle;margin-left:8px;font-weight:600}
+p{margin-bottom:14px;color:var(--txt)}
+.muted{color:var(--txt-dim)}
+a.inl{color:var(--lime);text-decoration:none;border-bottom:1px dotted var(--lime-dim)}
+
+/* ---------- panels / cards ---------- */
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:26px;margin:22px 0}
+.panel.soft{background:linear-gradient(180deg,var(--panel2),var(--panel))}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+@media(max-width:820px){.grid2,.grid3{grid-template-columns:1fr}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px;transition:.2s}
+.card:hover{border-color:var(--line2);transform:translateY(-2px)}
+.card .ic{font-family:var(--mono);font-size:12px;color:var(--cyan);margin-bottom:8px;letter-spacing:.5px}
+.card h4{font-family:var(--disp);font-size:17px;color:#fff;margin-bottom:7px}
+.card p{font-size:14px;color:var(--txt-dim);margin:0}
+
+/* ---------- code ---------- */
+.code{
+  background:#070a0f;border:1px solid var(--line);border-radius:11px;overflow:hidden;margin:18px 0;
+}
+.code .hd{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:9px 15px;border-bottom:1px solid var(--line);background:var(--ink2);
+}
+.code .hd .fn{font-family:var(--mono);font-size:12px;color:var(--txt-dim)}
+.code .hd .tag{font-family:var(--mono);font-size:10.5px;color:var(--lime);border:1px solid var(--lime-dim);border-radius:20px;padding:2px 9px}
+.code pre{padding:16px 18px;overflow-x:auto;font-family:var(--mono);font-size:12.5px;line-height:1.7}
+.code code{font-family:var(--mono);white-space:pre}
+.tk-key{color:var(--violet)}
+.tk-fn{color:var(--lime)}
+.tk-str{color:var(--amber)}
+.tk-num{color:var(--cyan)}
+.tk-com{color:var(--txt-faint);font-style:italic}
+.tk-cls{color:var(--coral)}
+.tk-var{color:var(--txt)}
+
+/* anchor highlight line */
+.anchor{display:inline-block;background:rgba(196,245,54,.12);border-left:2px solid var(--lime);padding:1px 0 1px 6px;margin-left:-8px;width:calc(100% + 8px)}
+
+/* ---------- visualization frames ---------- */
+.viz{background:radial-gradient(ellipse at 50% 0%,#0d141d,#070a0f);border:1px solid var(--line);border-radius:14px;padding:8px;margin:22px 0}
+.viz-head{display:flex;align-items:center;justify-content:space-between;padding:10px 14px 4px;flex-wrap:wrap;gap:10px}
+.viz-title{font-family:var(--mono);font-size:13px;color:var(--lime);letter-spacing:.5px}
+.viz-sub{font-family:var(--mono);font-size:11px;color:var(--txt-faint)}
+.viz svg{display:block;width:100%;height:auto}
+.controls{display:flex;gap:8px;align-items:center;padding:8px 14px 14px;flex-wrap:wrap}
+.btn{
+  font-family:var(--mono);font-size:12px;color:var(--txt);background:var(--panel2);
+  border:1px solid var(--line2);border-radius:7px;padding:7px 14px;cursor:pointer;transition:.15s;
+}
+.btn:hover{border-color:var(--lime);color:var(--lime)}
+.btn.primary{background:var(--lime);color:var(--ink);border-color:var(--lime);font-weight:600}
+.btn.primary:hover{background:#d4ff5a;color:var(--ink)}
+.btn:disabled{opacity:.35;cursor:not-allowed}
+.stepinfo{font-family:var(--mono);font-size:12px;color:var(--txt-dim);margin-left:auto;text-align:right}
+.stepinfo b{color:var(--cyan)}
+
+.legend{display:flex;gap:16px;flex-wrap:wrap;padding:4px 14px 12px;font-family:var(--mono);font-size:11px;color:var(--txt-dim)}
+.legend .lg{display:flex;align-items:center;gap:6px}
+.legend .sw{width:13px;height:13px;border-radius:3px}
+
+/* primitive selector */
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px;padding:8px 14px 0}
+.tab{font-family:var(--mono);font-size:12px;color:var(--txt-dim);background:transparent;border:1px solid var(--line);border-radius:7px;padding:7px 13px;cursor:pointer;transition:.15s}
+.tab:hover{border-color:var(--line2);color:var(--txt)}
+.tab.active{background:var(--coral);color:#fff;border-color:var(--coral);font-weight:600}
+
+.explain{font-family:var(--mono);font-size:13px;color:var(--txt);padding:14px;background:var(--ink2);border-radius:9px;margin:6px 14px 14px;border-left:2px solid var(--cyan);line-height:1.7}
+.explain .use{color:var(--lime)}
+.explain .fw{color:var(--amber)}
+
+/* tables */
+table{width:100%;border-collapse:collapse;font-size:13.5px;margin:18px 0;font-family:var(--mono)}
+th,td{text-align:left;padding:11px 13px;border-bottom:1px solid var(--line)}
+th{color:var(--lime);font-weight:600;font-size:12px;letter-spacing:.4px;text-transform:uppercase}
+td{color:var(--txt-dim)}
+td b{color:var(--txt)}
+tr:hover td{background:rgba(255,255,255,.015)}
+
+.callout{border:1px solid var(--line2);border-left:3px solid var(--amber);background:rgba(255,177,61,.05);border-radius:10px;padding:16px 18px;margin:18px 0;font-size:14px}
+.callout b{color:var(--amber)}
+.callout.tip{border-left-color:var(--lime);background:rgba(196,245,54,.05)}
+.callout.tip b{color:var(--lime)}
+
+footer{padding:54px 0 80px;border-top:1px solid var(--line);text-align:center}
+footer .f{font-family:var(--mono);font-size:12px;color:var(--txt-faint)}
+footer .f b{color:var(--lime)}
+
+.kbd{font-family:var(--mono);font-size:12px;background:var(--ink2);border:1px solid var(--line2);border-radius:5px;padding:1px 7px;color:var(--cyan)}
+
+.reveal{opacity:0;transform:translateY(22px);transition:.7s cubic-bezier(.2,.7,.2,1)}
+.reveal.in{opacity:1;transform:none}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="wrap">
+    <div class="brand"><b>NCCL</b> · 可视化全解</div>
+    <nav class="navlinks">
+      <a href="index.html" style="color:var(--coral);border-color:var(--coral-dim)">← 课程索引</a>
+      <a href="#phys">物理实现</a>
+      <a href="#prim">集合原语</a>
+      <a href="#ddp">DDP</a>
+      <a href="#fsdp">FSDP</a>
+      <a href="#tp">TP</a>
+      <a href="#debug">调试</a>
+    </nav>
+  </div>
+</div>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="tagchip"><span class="dot"></span>NVIDIA Collective Communications Library &nbsp;·&nbsp; 读作 "nickel"</div>
+    <h1 class="title">让 <span class="g">N 张 GPU</span><br>像一张卡一样思考</h1>
+    <p class="subtitle">NCCL 是分布式深度学习的<b>通信地基</b>。它把"几百张 GPU 之间搬运梯度与参数"这件脏活，抽象成几个干净的<b>集合通信原语</b>，再用拓扑感知把它们高效地铺在 NVLink、NVSwitch、PCIe 和 InfiniBand 上。本页从物理线缆讲到 PyTorch 代码。</p>
+    <div class="hero-meta">
+      <div class="m"><b>7</b>集合原语</div>
+      <div class="m"><b>3</b>并行范式拆解</div>
+      <div class="m"><b>2(N−1)</b>Ring AllReduce 步数</div>
+      <div class="m"><b>1</b>个交互页面</div>
+    </div>
+  </div>
+</header>
+
+<!-- ============================ 1. 物理实现 ============================ -->
+<section id="phys">
+<div class="wrap">
+  <div class="sec-head reveal"><span class="sec-num">01</span><h2>物理实现：数据到底走哪根线？</h2></div>
+  <p class="sec-lead reveal">NCCL 的核心工作是：<b>探测硬件拓扑</b> → <b>把 GPU 排成一个或多个"通信环 / 树"</b> → <b>在最快的链路上搬数据</b>。先看一台典型的 8 卡服务器长什么样。</p>
+
+  <div class="viz reveal">
+    <div class="viz-head">
+      <span class="viz-title">▣ 一台 8×GPU 节点的连线图</span>
+      <span class="viz-sub">节点内 = NVLink/NVSwitch（快） · 节点间 = NIC→InfiniBand（慢一个量级）</span>
+    </div>
+    <svg viewBox="0 0 920 470" role="img" aria-label="8 GPU node topology">
+      <defs>
+        <marker id="arrowL" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#c4f536"/></marker>
+        <linearGradient id="gpuG" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#16202c"/><stop offset="1" stop-color="#0d1620"/>
+        </linearGradient>
+      </defs>
+
+      <!-- NVSwitch fabric center -->
+      <rect x="330" y="200" width="260" height="56" rx="9" fill="#101a12" stroke="#8aa826"/>
+      <text x="460" y="224" text-anchor="middle" fill="#c4f536" font-family="IBM Plex Mono" font-size="14" font-weight="600">NVSwitch Fabric</text>
+      <text x="460" y="243" text-anchor="middle" fill="#7e92a6" font-family="IBM Plex Mono" font-size="10.5">全互联 · 每对 GPU 都有 NVLink 直达</text>
+
+      <!-- 8 GPUs around -->
+      <g font-family="IBM Plex Mono" font-size="12">
+        <!-- top row -->
+        <g><rect x="120" y="60" width="120" height="58" rx="9" fill="url(#gpuG)" stroke="#2c3e52"/><text x="180" y="86" text-anchor="middle" fill="#fff" font-size="13" font-weight="600">GPU 0</text><text x="180" y="104" text-anchor="middle" fill="#5e7a92" font-size="10">80GB HBM</text></g>
+        <g><rect x="280" y="60" width="120" height="58" rx="9" fill="url(#gpuG)" stroke="#2c3e52"/><text x="340" y="86" text-anchor="middle" fill="#fff" font-size="13" font-weight="600">GPU 1</text><text x="340" y="104" text-anchor="middle" fill="#5e7a92" font-size="10">80GB HBM</text></g>
+        <g><rect x="520" y="60" width="120" height="58" rx="9" fill="url(#gpuG)" stroke="#2c3e52"/><text x="580" y="86" text-anchor="middle" fill="#fff" font-size="13" font-weight="600">GPU 2</text><text x="580" y="104" text-anchor="middle" fill="#5e7a92" font-size="10">80GB HBM</text></g>
+        <g><rect x="680" y="60" width="120" height="58" rx="9" fill="url(#gpuG)" stroke="#2c3e52"/><text x="740" y="86" text-anchor="middle" fill="#fff" font-size="13" font-weight="600">GPU 3</text><text x="740" y="104" text-anchor="middle" fill="#5e7a92" font-size="10">80GB HBM</text></g>
+        <!-- bottom row -->
+        <g><rect x="120" y="340" width="120" height="58" rx="9" fill="url(#gpuG)" stroke="#2c3e52"/><text x="180" y="366" text-anchor="middle" fill="#fff" font-size="13" font-weight="600">GPU 4</text><text x="180" y="384" text-anchor="middle" fill="#5e7a92" font-size="10">80GB HBM</text></g>
+        <g><rect x="280" y="340" width="120" height="58" rx="9" fill="url(#gpuG)" stroke="#2c3e52"/><text x="340" y="366" text-anchor="middle" fill="#fff" font-size="13" font-weight="600">GPU 5</text><text x="340" y="384" text-anchor="middle" fill="#5e7a92" font-size="10">80GB HBM</text></g>
+        <g><rect x="520" y="340" width="120" height="58" rx="9" fill="url(#gpuG)" stroke="#2c3e52"/><text x="580" y="366" text-anchor="middle" fill="#fff" font-size="13" font-weight="600">GPU 6</text><text x="580" y="384" text-anchor="middle" fill="#5e7a92" font-size="10">80GB HBM</text></g>
+        <g><rect x="680" y="340" width="120" height="58" rx="9" fill="url(#gpuG)" stroke="#2c3e52"/><text x="740" y="366" text-anchor="middle" fill="#fff" font-size="13" font-weight="600">GPU 7</text><text x="740" y="384" text-anchor="middle" fill="#5e7a92" font-size="10">80GB HBM</text></g>
+      </g>
+
+      <!-- NVLink lines to fabric -->
+      <g stroke="#8aa826" stroke-width="2" opacity=".8">
+        <line x1="180" y1="118" x2="370" y2="200"/>
+        <line x1="340" y1="118" x2="410" y2="200"/>
+        <line x1="580" y1="118" x2="510" y2="200"/>
+        <line x1="740" y1="118" x2="550" y2="200"/>
+        <line x1="180" y1="340" x2="370" y2="256"/>
+        <line x1="340" y1="340" x2="410" y2="256"/>
+        <line x1="580" y1="340" x2="510" y2="256"/>
+        <line x1="740" y1="340" x2="550" y2="256"/>
+      </g>
+      <text x="250" y="160" fill="#8aa826" font-family="IBM Plex Mono" font-size="10">NVLink ~900GB/s</text>
+
+      <!-- CPU / PCIe -->
+      <rect x="380" y="300" width="160" height="34" rx="7" fill="#1a1410" stroke="#b8403a"/>
+      <text x="460" y="322" text-anchor="middle" fill="#ffb13d" font-family="IBM Plex Mono" font-size="11">CPU / PCIe 根</text>
+      <line x1="460" y1="300" x2="460" y2="256" stroke="#b8403a" stroke-width="1.6" stroke-dasharray="4 3"/>
+
+      <!-- NIC to IB -->
+      <rect x="828" y="200" width="78" height="56" rx="8" fill="#101620" stroke="#3dd6d0"/>
+      <text x="867" y="224" text-anchor="middle" fill="#3dd6d0" font-family="IBM Plex Mono" font-size="11">NIC</text>
+      <text x="867" y="240" text-anchor="middle" fill="#5e7a92" font-family="IBM Plex Mono" font-size="9">RoCE/IB</text>
+      <line x1="590" y1="228" x2="828" y2="228" stroke="#3dd6d0" stroke-width="2" marker-end="url(#arrowL)"/>
+      <text x="690" y="220" fill="#3dd6d0" font-family="IBM Plex Mono" font-size="10">→ 别的节点</text>
+
+      <!-- node frame -->
+      <rect x="92" y="40" width="740" height="378" rx="14" fill="none" stroke="#1f2c3a" stroke-dasharray="3 4"/>
+      <text x="104" y="33" fill="#4f6071" font-family="IBM Plex Mono" font-size="11">NODE 0  (一台物理服务器)</text>
+    </svg>
+    <div class="legend">
+      <div class="lg"><span class="sw" style="background:#8aa826"></span>NVLink / NVSwitch · 节点内最快路径</div>
+      <div class="lg"><span class="sw" style="background:#b8403a"></span>PCIe · 慢，回退路径</div>
+      <div class="lg"><span class="sw" style="background:#3dd6d0"></span>NIC → InfiniBand/RoCE · 跨节点</div>
+    </div>
+  </div>
+
+  <h3>三层链路速度差，是理解一切的前提</h3>
+  <p class="muted">下表给的是<b>链路的物理峰值带宽</b>(硬件标称的单向/聚合上限)。<u>注意：你实测一次 all-reduce 跑出的"算法带宽"会明显低于这个数</u>——因为集合操作要在环上走 2(N−1)/N 倍的数据、还有启动延迟。两个口径都对，但别混。</p>
+  <table class="reveal">
+    <tr><th>链路</th><th>物理峰值带宽</th><th>用在哪</th><th>记忆点</th></tr>
+    <tr><td><b>NVLink / NVSwitch</b></td><td>~600–900 GB/s</td><td>同节点 GPU↔GPU</td><td>快到像本地内存</td></tr>
+    <tr><td><b>PCIe Gen5</b></td><td>~64 GB/s</td><td>GPU↔CPU，无 NVLink 时的回退</td><td>慢一个数量级</td></tr>
+    <tr><td><b>InfiniBand / RoCE</b></td><td>~25–50 GB/s/卡</td><td>跨节点（配 GPUDirect RDMA）</td><td>跨机就靠它，绕不开</td></tr>
+  </table>
+  <div class="callout"><b>物理带宽 ≠ 算法带宽，这是新手最常踩的坑。</b> 上表是<u>链路的物理峰值</u>（硬件标称上限）。但你用测速工具（如 <code>nccl-tests</code>）实测一次 all-reduce，量出来的是<u>算法带宽 (algo bandwidth)</u>——明显更低：PCIe ~5–15 GB/s、NVLink ~50–120 GB/s、NVSwitch ~150–250 GB/s。<b>为什么低这么多？</b>因为一次 all-reduce 不是"把数据搬一遍"就完事：在环上，每份数据要被搬运 <b>2(N−1)/N ≈ 2 倍</b>的量（先 ReduceScatter 再 AllGather，见下一节），再叠加每一步的启动延迟。所以"实测约为物理上限的一半上下"是<u>正常现象，不是你配置错了</u>。</div>
+
+  <div class="grid3">
+    <div class="card reveal"><div class="ic">STEP 1 · BOOTSTRAP</div><h4>拓扑探测</h4><p>启动时 NCCL 扫描每张卡的 NVLink、PCIe 路径、NIC，建出一张硬件图。<span class="kbd">NCCL_DEBUG=INFO</span> 能打印它最终选了什么路径。</p></div>
+    <div class="card reveal"><div class="ic">STEP 2 · ALGORITHM</div><h4>搭环 / 搭树</h4><p>把 GPU 排成一个或多个逻辑<b>环（Ring）</b>或<b>树（Tree）</b>。环带宽最优，树延迟最优，NCCL 按规模自动选。</p></div>
+    <div class="card reveal"><div class="ic">STEP 3 · TRANSPORT</div><h4>零拷贝搬运</h4><p>GPU↔GPU 直接走 NVLink（P2P），跨机走 GPUDirect RDMA，<b>绕过 CPU</b>。这就是 NCCL 比"自己写 MPI"快的原因。</p></div>
+  </div>
+
+  <h3>为什么是"环"？—— 带宽最优的朴素直觉</h3>
+  <p class="muted">朴素做法：所有卡把数据发给 0 号卡求和，再发回去 → 0 号卡的网卡被打爆，成为瓶颈。<b>环</b>的聪明之处：每张卡只和左右邻居通信，<u>所有链路同时满载</u>，没有任何一条线是热点。下一节的交互动画会把这一点演出来。</p>
+
+  <h3>但 NCCL ≠ 只有环：它有一整套算法，按规模自动选</h3>
+  <p class="muted">"环带宽最优"只在中等规模成立。卡一多，环的<b>步数 2(N−1)</b> 线性增长，延迟就吃不消了。NCCL 内部其实有多套算法，启动时按 GPU 数、消息大小、拓扑自动挑选（<span class="kbd">NCCL_DEBUG=INFO</span> 会打印 <code>Ring</code> / <code>Tree</code> / <code>NVLS</code> 等字样）：</p>
+  <table class="reveal">
+    <tr><th>算法</th><th>结构</th><th>强在</th><th>典型触发</th></tr>
+    <tr><td><b style="color:#c4f536">Ring</b></td><td>GPU 排成环，邻居传递</td><td>带宽最优、无热点</td><td>大消息、中等规模</td></tr>
+    <tr><td><b style="color:#3dd6d0">Tree</b></td><td>double binary tree（双二叉树）</td><td>延迟随卡数 <b>对数级</b>增长</td><td>多节点、小消息、超大规模</td></tr>
+    <tr><td><b style="color:#9d8cff">NVLS / CollNet</b></td><td>规约直接发生在 <b>NVSwitch 内</b>（NVLink SHARP）</td><td>交换机帮你做加法，省带宽</td><td>NVLink 域内、支持 SHARP 的硬件</td></tr>
+  </table>
+  <div class="callout"><b>纠正一个常见误解：</b> "NCCL = Ring AllReduce" 是过时印象。下面深挖区用 Ring 演示是因为它<u>最直观</u>，但真实大规模训练里 Tree 和 NVLS 往往才是实际跑的算法。Ring 是理解基础，不是全部。</div>
+
+  <div class="callout tip"><b>新手一句话总结：</b> NCCL = "拓扑探测器" + "把集合通信编译成邻居间传递（Ring / Tree / NVLS 自动选）" + "贴着最快的线零拷贝地搬"。你几乎从不直接调它，框架替你调。</div>
+</div>
+</section>
+
+<!-- ============================ 2. 集合原语 ============================ -->
+<section id="prim">
+<div class="wrap">
+  <div class="sec-head reveal"><span class="sec-num">02</span><h2>集合原语：可交互拆解</h2></div>
+  <p class="sec-lead reveal">"集合通信"= 一组 GPU <b>一起</b>完成的数据操作。下面有<b>两个</b>视图：① 通用视图只对比<b>通信前 vs 通信后</b>（输入长什么样、输出长什么样），帮你先记住"这个原语到底干了什么事"；② 再往下的深挖视图才<b>逐步拆解中间每一步</b>。先看 ①。每种颜色代表"来自某张卡的数据块"。</p>
+
+  <div class="callout tip"><b>先看懂图里那一竖列格子，否则全是天书：</b> 每张 GPU 下面有 <b>4 个上下叠的格子</b>——这是把这张卡持有的数据向量<u>切成 4 段（叫 chunk）</u>。格子里的<b>数字/颜色 = 这一段的数值来自哪张卡</b>（0=GPU0、1=GPU1…），<b>Σ</b> = 已经是"4 张卡对应段求和"的结果。<br>所以 AllReduce 一开始 GPU0 显示 <code>0 0 0 0</code>，意思是"GPU0 有一个完整向量、切成 4 段、这 4 段当然全是它自己的值"；结束时变成 <code>Σ Σ Σ Σ</code>，意思是"每段都成了所有卡之和"。<br><span class="muted">⚠️ 这里的 chunk 是<u>算法为了在环上分段流水</u>切的，跟 DDP 的 <b>bucket（梯度分桶）</b>是两回事——bucket 是"把零碎梯度攒成一桶再发"的工程优化，本节不涉及。</span></div>
+
+  <div class="viz reveal">
+    <div class="tabs" id="primTabs"></div>
+    <div class="viz-head">
+      <span class="viz-title" id="primName">AllReduce</span>
+      <span class="viz-sub" id="primFormula"></span>
+    </div>
+    <svg id="primSvg" viewBox="0 0 920 360" role="img" aria-label="collective primitive"></svg>
+    <div class="explain" id="primExplain"></div>
+    <div class="controls">
+      <button class="btn" id="primReset">⟲ 重置</button>
+      <button class="btn primary" id="primPlay">看「通信后」结果 ▶</button>
+      <span class="stepinfo" id="primStep"></span>
+    </div>
+    <div class="legend">
+      <div class="lg"><span class="sw" style="background:#c4f536"></span>某段(chunk)的值来自 GPU0</div>
+      <div class="lg"><span class="sw" style="background:#ff5d52"></span>来自 GPU1</div>
+      <div class="lg"><span class="sw" style="background:#3dd6d0"></span>来自 GPU2</div>
+      <div class="lg"><span class="sw" style="background:#9d8cff"></span>来自 GPU3</div>
+      <div class="lg"><span class="sw" style="background:#ffb13d"></span>该段已是各卡之和 (Σ)</div>
+    </div>
+  </div>
+
+  <table class="reveal">
+    <tr><th>原语</th><th>从 → 到</th><th>谁在用</th></tr>
+    <tr><td><b style="color:#c4f536">AllReduce</b></td><td>各卡有完整数据 → 各卡都拿到"求和后"的结果</td><td>DDP 梯度同步（最高频）</td></tr>
+    <tr><td><b style="color:#3dd6d0">ReduceScatter</b></td><td>各卡有全部块 → 各卡只留"自己负责那块的和"</td><td>FSDP 反向、ZeRO</td></tr>
+    <tr><td><b style="color:#ff5d52">AllGather</b></td><td>各卡有一块 → 各卡拼出完整数据</td><td>FSDP 前向/反向取参数、TP</td></tr>
+    <tr><td><b style="color:#ffb13d">Broadcast</b></td><td>root 一张卡有数据 → 所有卡复制一份</td><td>初始化时同步权重</td></tr>
+    <tr><td><b style="color:#9d8cff">All-to-All</b></td><td>每卡持有发往所有卡的分片 → 转置交换</td><td>MoE 专家并行、序列并行</td></tr>
+  </table>
+  <div class="callout"><b>关键恒等式：</b> <span style="font-family:var(--mono);color:var(--lime)">AllReduce = ReduceScatter + AllGather</span>。这不是巧合——正是 Ring AllReduce 的两个阶段，也正是 FSDP 把 AllReduce "拆开用" 的原因。记住它，第 3 节会反复出现。</div>
+
+  <h3>深挖 · 全部 5 个原语<span class="pill">逐步动画</span></h3>
+  <p class="muted">4 张卡（环方向 0→1→2→3→0），每张持有一个切成 4 个 chunk 的向量。选一个原语，用「下一步」逐步观察。</p>
+  <div class="callout tip"><b>先说清"一步"是什么意思（否则你点了也不知道在看啥）：</b> 这里的<u>每一步 = 所有 GPU 同时各发一个 chunk 给它的右邻居、同时各收一个</u>。不是"GPU0 发完轮到 GPU1"，而是 4 条链路<b>并发</b>跑——这正是环最聪明的地方（没有任何一张卡是热点）。所以 N=4 张卡的 AllReduce 需要 <code>2(N−1)=6</code> 步：前 3 步累加（ReduceScatter），后 3 步传播结果（AllGather）。看图时盯住：<b>绿色描边的格子</b>=这一步正在被发送的 chunk，<b>飞动的小绿点</b>=数据在链路上移动，格子里的 <b>0/1/2/3</b>=数据来自哪张卡，<b>a+b / Σ</b>=已经累加了哪些卡的值。</div>
+  <p class="muted">每个动画都是<b>严格按真实算法推导</b>的状态机，不是随便画的示意：<b>AllReduce / ReduceScatter / AllGather</b> 用 Ring，<b>Broadcast</b> 用二叉树，<b>All-to-All</b> 是逐轮转置。</p>
+
+  <div class="viz reveal">
+    <div class="tabs" id="ddTabs"></div>
+    <div class="viz-head">
+      <span class="viz-title" id="ringPhase">阶段：就绪</span>
+      <span class="viz-sub" id="ringSub">绿色描边 = 本步正在发送的 chunk</span>
+    </div>
+    <svg id="ringSvg" viewBox="0 0 920 420" role="img" aria-label="collective step-through"></svg>
+    <div class="controls">
+      <button class="btn" id="ringReset">⟲ 重置</button>
+      <button class="btn" id="ringPrev">◀ 上一步</button>
+      <button class="btn primary" id="ringNext">下一步 ▶</button>
+      <button class="btn" id="ringAuto">⏩ 自动播放</button>
+      <span class="stepinfo" id="ringStep">第 0 / 0 步</span>
+    </div>
+    <div class="explain" id="ringExplain">点击「下一步」开始。</div>
+    <div class="legend">
+      <div class="lg"><span class="sw" style="background:#c4f536"></span>源自 GPU0 的块</div>
+      <div class="lg"><span class="sw" style="background:#ff5d52"></span>GPU1</div>
+      <div class="lg"><span class="sw" style="background:#3dd6d0"></span>GPU2</div>
+      <div class="lg"><span class="sw" style="background:#9d8cff"></span>GPU3</div>
+      <div class="lg"><span class="sw" style="background:#5d7a8f"></span>部分和 (a+b)</div>
+      <div class="lg"><span class="sw" style="background:#ffb13d"></span>全和 Σ</div>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- ============================ 3a. DDP ============================ -->
+<section id="ddp">
+<div class="wrap">
+  <div class="sec-head reveal"><span class="sec-num">03·A</span><h2>DDP — 数据并行</h2></div>
+  <p class="sec-lead reveal"><b>每张卡放整个模型的完整副本</b>，喂不同的数据批次。各自算梯度，然后用 <b style="color:#c4f536">AllReduce</b> 把梯度求平均 → 所有副本走同一步参数更新，保持一致。是最简单、最常用的并行。</p>
+
+  <div class="viz reveal">
+    <div class="viz-head"><span class="viz-title">▣ DDP 一个训练 step 的时间线</span><span class="viz-sub">关键技巧：梯度分桶，反向边算边通信（overlap）</span></div>
+    <svg viewBox="0 0 920 300" role="img">
+      <defs><marker id="ar2" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#c4f536"/></marker></defs>
+      <!-- two gpu lanes -->
+      <text x="20" y="60" fill="#7e92a6" font-family="IBM Plex Mono" font-size="12">GPU0</text>
+      <text x="20" y="170" fill="#7e92a6" font-family="IBM Plex Mono" font-size="12">GPU1</text>
+      <!-- forward -->
+      <rect x="70" y="38" width="150" height="34" rx="6" fill="#16202c" stroke="#2c3e52"/><text x="145" y="60" text-anchor="middle" fill="#c5d3e0" font-family="IBM Plex Mono" font-size="11">Forward (batch A)</text>
+      <rect x="70" y="148" width="150" height="34" rx="6" fill="#16202c" stroke="#2c3e52"/><text x="145" y="170" text-anchor="middle" fill="#c5d3e0" font-family="IBM Plex Mono" font-size="11">Forward (batch B)</text>
+      <!-- backward -->
+      <rect x="235" y="38" width="200" height="34" rx="6" fill="#1a1410" stroke="#b8403a"/><text x="335" y="60" text-anchor="middle" fill="#ffb13d" font-family="IBM Plex Mono" font-size="11">Backward → grads</text>
+      <rect x="235" y="148" width="200" height="34" rx="6" fill="#1a1410" stroke="#b8403a"/><text x="335" y="170" text-anchor="middle" fill="#ffb13d" font-family="IBM Plex Mono" font-size="11">Backward → grads</text>
+      <!-- allreduce overlapping bucket -->
+      <rect x="300" y="92" width="270" height="36" rx="6" fill="#101a12" stroke="#8aa826"/>
+      <text x="435" y="115" text-anchor="middle" fill="#c4f536" font-family="IBM Plex Mono" font-size="11" font-weight="600">AllReduce(grad buckets) — 求和(Σ)</text>
+      <line x1="335" y1="72" x2="360" y2="92" stroke="#8aa826" stroke-width="1.5"/>
+      <line x1="335" y1="148" x2="360" y2="128" stroke="#8aa826" stroke-width="1.5"/>
+      <text x="300" y="150" fill="#5e7a92" font-family="IBM Plex Mono" font-size="9.5" transform="rotate(0)"></text>
+      <!-- optimizer -->
+      <rect x="600" y="38" width="150" height="34" rx="6" fill="#101620" stroke="#3dd6d0"/><text x="675" y="60" text-anchor="middle" fill="#3dd6d0" font-family="IBM Plex Mono" font-size="11">optimizer.step()</text>
+      <rect x="600" y="148" width="150" height="34" rx="6" fill="#101620" stroke="#3dd6d0"/><text x="675" y="170" text-anchor="middle" fill="#3dd6d0" font-family="IBM Plex Mono" font-size="11">optimizer.step()</text>
+      <line x1="570" y1="110" x2="600" y2="60" stroke="#3dd6d0" stroke-width="1.4"/>
+      <line x1="570" y1="110" x2="600" y2="165" stroke="#3dd6d0" stroke-width="1.4"/>
+      <!-- time axis -->
+      <line x1="70" y1="240" x2="850" y2="240" stroke="#2c3e52" marker-end="url(#ar2)"/>
+      <text x="70" y="262" fill="#4f6071" font-family="IBM Plex Mono" font-size="10">时间 →</text>
+      <text x="700" y="262" fill="#c4f536" font-family="IBM Plex Mono" font-size="10">两卡参数始终一致</text>
+      <text x="300" y="285" fill="#7e92a6" font-family="IBM Plex Mono" font-size="11">★ 唯一的通信就是这一次 AllReduce / step（按桶切成多次，与反向重叠）</text>
+    </svg>
+  </div>
+
+  <div class="grid2">
+    <div>
+      <h3>用到的原语</h3>
+      <table>
+        <tr><th>时机</th><th>原语</th></tr>
+        <tr><td>启动：广播初始权重</td><td><b style="color:#ffb13d">Broadcast</b></td></tr>
+        <tr><td>每步反向：求和梯度</td><td><b style="color:#c4f536">AllReduce</b></td></tr>
+      </table>
+      <div class="callout"><b>求和 ≠ 平均，分清归属：</b> NCCL 的 AllReduce 只做 <code>ncclSum</code>（把 N 张卡的梯度<u>相加</u>）。<u>除以 N 求平均是框架/PyTorch 自己做的</u>，不是 NCCL 的事——DDP 通过对梯度做 scale 实现。本页凡说"平均"，底层都是「NCCL 求和 + 框架缩放」两步。</div>
+      <div class="callout tip"><b>显存代价：</b> 每张卡都存<u>完整</u>模型+梯度+优化器状态。模型放得下单卡才能用 DDP，否则需要 FSDP/TP。</div>
+    </div>
+    <div>
+      <h3>锚定代码 <span class="muted" style="font-size:13px">PyTorch</span></h3>
+      <div class="code">
+        <div class="hd"><span class="fn">train_ddp.py</span><span class="tag">torch.nn.parallel</span></div>
+<pre><code><span class="tk-key">import</span> torch.distributed <span class="tk-key">as</span> dist
+<span class="tk-key">from</span> torch.nn.parallel <span class="tk-key">import</span> DistributedDataParallel <span class="tk-key">as</span> <span class="tk-cls">DDP</span>
+
+<span class="tk-com"># 后端选 nccl —— 这一行就是在用 NCCL</span>
+dist.<span class="tk-fn">init_process_group</span>(<span class="tk-str">"nccl"</span>)
+torch.cuda.<span class="tk-fn">set_device</span>(local_rank)
+
+model = <span class="tk-cls">DDP</span>(model.<span class="tk-fn">to</span>(local_rank),
+            device_ids=[local_rank])
+<span class="tk-com"># ↑ 构造时内部 Broadcast(rank0 权重) 给所有卡</span>
+
+<span class="tk-key">for</span> x, y <span class="tk-key">in</span> loader:
+    out = <span class="tk-fn">model</span>(x)            <span class="tk-com"># forward</span>
+    loss = <span class="tk-fn">loss_fn</span>(out, y)
+<span class="anchor">    loss.<span class="tk-fn">backward</span>()        <span class="tk-com"># ← 反向钩子触发 AllReduce(梯度)</span></span>
+    optimizer.<span class="tk-fn">step</span>()       <span class="tk-com"># 各卡梯度已一致，更新同步</span>
+    optimizer.<span class="tk-fn">zero_grad</span>()</code></pre>
+      </div>
+      <p class="muted" style="font-size:13px">高亮行：<code style="color:var(--lime)">backward()</code> 触发 DDP 注册的 autograd 钩子，梯度凑满一个桶就异步发起一次 <code style="color:var(--lime)">ncclAllReduce</code>，和后续梯度计算重叠。</p>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- ============================ 3b. FSDP ============================ -->
+<section id="fsdp">
+<div class="wrap">
+  <div class="sec-head reveal"><span class="sec-num">03·B</span><h2>FSDP — 全分片数据并行</h2></div>
+  <p class="sec-lead reveal">DDP 的痛点是"每卡存整模型"。FSDP（即 ZeRO-3）把<b>参数、梯度、优化器状态都按卡切片</b>：平时每张卡只存自己那 1/N。<b>临用临凑</b>——某层要计算时，<b style="color:#ff5d52">AllGather</b> 临时拼出完整权重，用完即扔。这是它如何用 <code style="color:var(--cyan)">AllReduce = ReduceScatter + AllGather</code> 这条恒等式省显存的。</p>
+
+  <h3>到底"怎么分到不同卡"？</h3>
+  <p class="muted">假设一层有参数向量 <code>W</code>（比如 1024 个数），4 张卡。FSDP 做的事极其朴素：<b>把 W 按下标切成 4 段，卡 i 只在显存里留第 i 段</b>。梯度 <code>G</code>、优化器状态 <code>Opt</code>（Adam 的动量/方差）<u>同样按这个切法各留 1/4</u>。三样东西的"归属"完全对齐——谁拥有第 i 段参数，就负责第 i 段的梯度和优化器状态。这就是"分到不同卡"的全部含义：<b>不是把不同的层放到不同卡（那是 Pipeline 并行），而是把同一层的同一个张量横切开</b>。</p>
+
+  <div class="viz reveal">
+    <div class="viz-head"><span class="viz-title">▣ 静息布局：一层的 W / G / Opt 如何切到 4 张卡</span><span class="viz-sub">平时（不计算时）每卡显存里只有彩色那 1/4，灰色部分根本不存在</span></div>
+    <svg viewBox="0 0 920 250" role="img" aria-label="FSDP resting shard layout">
+      <!-- column headers -->
+      <text x="120" y="30" text-anchor="middle" fill="#c4f536" font-family="IBM Plex Mono" font-size="12" font-weight="600">参数 W</text>
+      <text x="360" y="30" text-anchor="middle" fill="#ff5d52" font-family="IBM Plex Mono" font-size="12" font-weight="600">梯度 G</text>
+      <text x="600" y="30" text-anchor="middle" fill="#3dd6d0" font-family="IBM Plex Mono" font-size="12" font-weight="600">优化器状态 Opt</text>
+      <text x="820" y="30" text-anchor="middle" fill="#7e92a6" font-family="IBM Plex Mono" font-size="11">每卡只存</text>
+      <!-- 4 rows = 4 GPUs -->
+      <g font-family="IBM Plex Mono" font-size="10">
+        <!-- helper: each group is 4 stacked cells, only row r is colored -->
+        <!-- GPU rows -->
+        <g>
+          <!-- row labels -->
+          <text x="20" y="64" fill="#fff" font-size="11">GPU0</text>
+          <text x="20" y="110" fill="#fff" font-size="11">GPU1</text>
+          <text x="20" y="156" fill="#fff" font-size="11">GPU2</text>
+          <text x="20" y="202" fill="#fff" font-size="11">GPU3</text>
+        </g>
+      </g>
+      <!-- W column: 4 GPUs x 4 segments. GPU i owns segment i -->
+      <g font-family="IBM Plex Mono" font-size="9" text-anchor="middle">
+        <!-- W -->
+        <g>
+          <!-- GPU0 -->
+          <rect x="60" y="50" width="30" height="20" rx="3" fill="#c4f536"/><rect x="92" y="50" width="30" height="20" rx="3" fill="#1a2330" stroke="#2c3e52"/><rect x="124" y="50" width="30" height="20" rx="3" fill="#1a2330" stroke="#2c3e52"/><rect x="156" y="50" width="30" height="20" rx="3" fill="#1a2330" stroke="#2c3e52"/>
+          <!-- GPU1 -->
+          <rect x="60" y="96" width="30" height="20" rx="3" fill="#1a2330" stroke="#2c3e52"/><rect x="92" y="96" width="30" height="20" rx="3" fill="#c4f536"/><rect x="124" y="96" width="30" height="20" rx="3" fill="#1a2330" stroke="#2c3e52"/><rect x="156" y="96" width="30" height="20" rx="3" fill="#1a2330" stroke="#2c3e52"/>
+          <!-- GPU2 -->
+          <rect x="60" y="142" width="30" height="20" rx="3" fill="#1a2330" stroke="#2c3e52"/><rect x="92" y="142" width="30" height="20" rx="3" fill="#1a2330" stroke="#2c3e52"/><rect x="124" y="142" width="30" height="20" rx="3" fill="#c4f536"/><rect x="156" y="142" width="30" height="20" rx="3" fill="#1a2330" stroke="#2c3e52"/>
+          <!-- GPU3 -->
+          <rect x="60" y="188" width="30" height="20" rx="3" fill="#1a2330" stroke="#2c3e52"/><rect x="92" y="188" width="30" height="20" rx="3" fill="#1a2330" stroke="#2c3e52"/><rect x="124" y="188" width="30" height="20" rx="3" fill="#1a2330" stroke="#2c3e52"/><rect x="156" y="188" width="30" height="20" rx="3" fill="#c4f536"/>
+        </g>
+        <!-- G -->
+        <g>
+          <rect x="300" y="50" width="30" height="20" rx="3" fill="#ff5d52"/><rect x="332" y="50" width="30" height="20" rx="3" fill="#1a2330" stroke="#2c3e52"/><rect x="364" y="50" width="30" height="20" rx="3" fill="#1a2330" stroke="#2c3e52"/><rect x="396" y="50" width="30" height="20" rx="3" fill="#1a2330" stroke="#2c3e52"/>
+          <rect x="300" y="96" width="30" height="20" rx="3" fill="#1a2330" stroke="#2c3e52"/><rect x="332" y="96" width="30" height="20" rx="3" fill="#ff5d52"/><rect x="364" y="96" width="30" height="20" rx="3" fill="#1a2330" stroke="#2c3e52"/><rect x="396" y="96" width="30" height="20" rx="3" fill="#1a2330" stroke="#2c3e52"/>
+          <rect x="300" y="142" width="30" height="20" rx="3" fill="#1a2330" stroke="#2c3e52"/><rect x="332" y="142" width="30" height="20" rx="3" fill="#1a2330" stroke="#2c3e52"/><rect x="364" y="142" width="30" height="20" rx="3" fill="#ff5d52"/><rect x="396" y="142" width="30" height="20" rx="3" fill="#1a2330" stroke="#2c3e52"/>
+          <rect x="300" y="188" width="30" height="20" rx="3" fill="#1a2330" stroke="#2c3e52"/><rect x="332" y="188" width="30" height="20" rx="3" fill="#1a2330" stroke="#2c3e52"/><rect x="364" y="188" width="30" height="20" rx="3" fill="#1a2330" stroke="#2c3e52"/><rect x="396" y="188" width="30" height="20" rx="3" fill="#ff5d52"/>
+        </g>
+        <!-- Opt -->
+        <g>
+          <rect x="540" y="50" width="30" height="20" rx="3" fill="#3dd6d0"/><rect x="572" y="50" width="30" height="20" rx="3" fill="#1a2330" stroke="#2c3e52"/><rect x="604" y="50" width="30" height="20" rx="3" fill="#1a2330" stroke="#2c3e52"/><rect x="636" y="50" width="30" height="20" rx="3" fill="#1a2330" stroke="#2c3e52"/>
+          <rect x="540" y="96" width="30" height="20" rx="3" fill="#1a2330" stroke="#2c3e52"/><rect x="572" y="96" width="30" height="20" rx="3" fill="#3dd6d0"/><rect x="604" y="96" width="30" height="20" rx="3" fill="#1a2330" stroke="#2c3e52"/><rect x="636" y="96" width="30" height="20" rx="3" fill="#1a2330" stroke="#2c3e52"/>
+          <rect x="540" y="142" width="30" height="20" rx="3" fill="#1a2330" stroke="#2c3e52"/><rect x="572" y="142" width="30" height="20" rx="3" fill="#1a2330" stroke="#2c3e52"/><rect x="604" y="142" width="30" height="20" rx="3" fill="#3dd6d0"/><rect x="636" y="142" width="30" height="20" rx="3" fill="#1a2330" stroke="#2c3e52"/>
+          <rect x="540" y="188" width="30" height="20" rx="3" fill="#1a2330" stroke="#2c3e52"/><rect x="572" y="188" width="30" height="20" rx="3" fill="#1a2330" stroke="#2c3e52"/><rect x="604" y="188" width="30" height="20" rx="3" fill="#1a2330" stroke="#2c3e52"/><rect x="636" y="188" width="30" height="20" rx="3" fill="#3dd6d0"/>
+        </g>
+      </g>
+      <!-- per-gpu "only stores 1/4" annotation -->
+      <text x="820" y="64" text-anchor="middle" fill="#5e7a92" font-family="IBM Plex Mono" font-size="9">W₀ G₀ Opt₀</text>
+      <text x="820" y="110" text-anchor="middle" fill="#5e7a92" font-family="IBM Plex Mono" font-size="9">W₁ G₁ Opt₁</text>
+      <text x="820" y="156" text-anchor="middle" fill="#5e7a92" font-family="IBM Plex Mono" font-size="9">W₂ G₂ Opt₂</text>
+      <text x="820" y="202" text-anchor="middle" fill="#5e7a92" font-family="IBM Plex Mono" font-size="9">W₃ G₃ Opt₃</text>
+      <text x="60" y="235" fill="#7e92a6" font-family="IBM Plex Mono" font-size="10.5">彩色 = 这张卡真实持有的 1/4   ·   灰色 = 不存（要用时临时 AllGather 拼出来，用完立刻丢）</text>
+    </svg>
+  </div>
+
+  <h3>切片的三个级别：ZeRO-1 / 2 / 3</h3>
+  <p class="muted">FSDP 背后是 ZeRO（Zero Redundancy Optimizer）的思想，<b>切的东西越多，省的显存越多，通信也越多</b>，分三级递进：</p>
+  <table class="reveal">
+    <tr><th>级别</th><th>切谁</th><th>每卡还冗余存什么</th><th>省显存</th></tr>
+    <tr><td><b>ZeRO-1</b></td><td>只切 <b style="color:#3dd6d0">优化器状态 Opt</b></td><td>完整 W + 完整 G</td><td>少（但 Adam 的 Opt 通常最占地，先切它性价比高）</td></tr>
+    <tr><td><b>ZeRO-2</b></td><td>切 <b style="color:#3dd6d0">Opt</b> + <b style="color:#ff5d52">梯度 G</b></td><td>完整 W</td><td>中</td></tr>
+    <tr><td><b style="color:#c4f536">ZeRO-3 = FSDP</b></td><td>切 <b style="color:#3dd6d0">Opt</b> + <b style="color:#ff5d52">G</b> + <b style="color:#c4f536">参数 W</b></td><td>几乎没有冗余（≈ DDP 显存 / N）</td><td>最多</td></tr>
+  </table>
+  <div class="callout"><b>注意别和 Ring AllReduce 的"步骤"混了。</b> ZeRO-1/2/3 是<u>"切多少种东西"</u>的三个<b>配置档位</b>，不是一次通信的三个先后阶段。<b>PyTorch 的 <code>FSDP</code> 默认就是 ZeRO-3</b>（三样全切）；下面那张"某一层时间线"演的也是 ZeRO-3。如果只想要 ZeRO-1/2，可以用 <code>ShardingStrategy</code> 调（如 <code>SHARD_GRAD_OP</code> ≈ ZeRO-2）。</div>
+  <div class="callout tip"><b>"用完即扔"扔的是什么？</b> 扔的是<u>临时 AllGather 拼出来的完整 W</u>——它只在算这一层的几毫秒里存在，算完立刻释放，所以峰值显存只多出"当前这一层的完整权重"，而不是整个模型。参数本体（那 1/4）一直留着，不扔。</div>
+
+  <div class="viz reveal">
+    <div class="viz-head"><span class="viz-title">▣ ZeRO-3 运行时：处理"某一层"的时间线</span><span class="viz-sub">静息时只存 1/N（见上图），真要算这层时才临时凑出完整权重</span></div>
+    <svg viewBox="0 0 920 330" role="img">
+      <defs><marker id="ar3" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#7e92a6"/></marker></defs>
+      <!-- forward phase -->
+      <text x="20" y="30" fill="#c4f536" font-family="IBM Plex Mono" font-size="12" font-weight="600">前向</text>
+      <rect x="70" y="44" width="120" height="40" rx="7" fill="#1a1010" stroke="#ff5d52"/><text x="130" y="63" text-anchor="middle" fill="#ff5d52" font-family="IBM Plex Mono" font-size="10.5">AllGather</text><text x="130" y="77" text-anchor="middle" fill="#7e92a6" font-family="IBM Plex Mono" font-size="9">凑出全层权重</text>
+      <rect x="205" y="44" width="120" height="40" rx="7" fill="#16202c" stroke="#2c3e52"/><text x="265" y="68" text-anchor="middle" fill="#c5d3e0" font-family="IBM Plex Mono" font-size="10.5">compute fwd</text>
+      <rect x="340" y="44" width="135" height="40" rx="7" fill="#0f1620" stroke="#1f2c3a"/><text x="407" y="63" text-anchor="middle" fill="#7e92a6" font-family="IBM Plex Mono" font-size="10.5">丢弃非己分片</text><text x="407" y="77" text-anchor="middle" fill="#5e7a92" font-family="IBM Plex Mono" font-size="9">显存立刻释放</text>
+      <line x1="475" y1="64" x2="540" y2="64" stroke="#7e92a6" stroke-width="1.4" stroke-dasharray="3 3" marker-end="url(#ar3)"/>
+      <text x="560" y="68" fill="#5e7a92" font-family="IBM Plex Mono" font-size="10">…下一层重复…</text>
+
+      <!-- backward phase -->
+      <text x="20" y="170" fill="#ffb13d" font-family="IBM Plex Mono" font-size="12" font-weight="600">反向</text>
+      <rect x="70" y="184" width="120" height="40" rx="7" fill="#1a1010" stroke="#ff5d52"/><text x="130" y="203" text-anchor="middle" fill="#ff5d52" font-family="IBM Plex Mono" font-size="10.5">AllGather</text><text x="130" y="217" text-anchor="middle" fill="#7e92a6" font-family="IBM Plex Mono" font-size="9">再凑一次权重</text>
+      <rect x="205" y="184" width="120" height="40" rx="7" fill="#16202c" stroke="#2c3e52"/><text x="265" y="208" text-anchor="middle" fill="#c5d3e0" font-family="IBM Plex Mono" font-size="10.5">compute grad</text>
+      <rect x="340" y="184" width="150" height="40" rx="7" fill="#101a14" stroke="#3dd6d0"/><text x="415" y="203" text-anchor="middle" fill="#3dd6d0" font-family="IBM Plex Mono" font-size="10.5">ReduceScatter</text><text x="415" y="217" text-anchor="middle" fill="#7e92a6" font-family="IBM Plex Mono" font-size="9">每卡只收自己那片梯度的和</text>
+      <rect x="505" y="184" width="120" height="40" rx="7" fill="#101620" stroke="#3dd6d0"/><text x="565" y="208" text-anchor="middle" fill="#3dd6d0" font-family="IBM Plex Mono" font-size="10.5">step(本地分片)</text>
+
+      <text x="70" y="280" fill="#7e92a6" font-family="IBM Plex Mono" font-size="11">★ DDP 的一次 AllReduce，在 FSDP 里被拆成「反向 ReduceScatter」+「前/反向 AllGather」——切片省显存的代价是更多次通信。</text>
+      <text x="70" y="305" fill="#5e7a92" font-family="IBM Plex Mono" font-size="10.5">通信量与 DDP 同阶，但峰值显存 ≈ DDP / N。可用 prefetch 把 AllGather 与计算重叠藏住延迟。</text>
+    </svg>
+  </div>
+
+  <div class="grid2">
+    <div>
+      <h3>用到的原语</h3>
+      <table>
+        <tr><th>时机</th><th>原语</th></tr>
+        <tr><td>前向：取本层完整权重</td><td><b style="color:#ff5d52">AllGather</b></td></tr>
+        <tr><td>反向：再取一次权重</td><td><b style="color:#ff5d52">AllGather</b></td></tr>
+        <tr><td>反向：分发并求和梯度</td><td><b style="color:#3dd6d0">ReduceScatter</b></td></tr>
+      </table>
+      <div class="callout tip"><b>记忆锚：</b> FSDP = 把 DDP 的 <code>AllReduce</code> 拆成 <code>ReduceScatter</code>（反向）+ 平时把权重 <code>AllGather</code> 回来。省显存，换来约 1.5× 通信。</div>
+    </div>
+    <div>
+      <h3>锚定代码 <span class="muted" style="font-size:13px">PyTorch FSDP</span></h3>
+      <div class="code">
+        <div class="hd"><span class="fn">train_fsdp.py</span><span class="tag">torch.distributed.fsdp</span></div>
+<pre><code><span class="tk-key">from</span> torch.distributed.fsdp <span class="tk-key">import</span> \
+     FullyShardedDataParallel <span class="tk-key">as</span> <span class="tk-cls">FSDP</span>
+
+dist.<span class="tk-fn">init_process_group</span>(<span class="tk-str">"nccl"</span>)
+
+<span class="tk-com"># 按 Transformer block 自动切分包装</span>
+model = <span class="tk-cls">FSDP</span>(
+    model,
+    auto_wrap_policy=transformer_wrap,
+    device_id=local_rank,
+)   <span class="tk-com"># 参数此刻已被切成 1/N 存放</span>
+
+<span class="tk-key">for</span> x, y <span class="tk-key">in</span> loader:
+<span class="anchor">    out = <span class="tk-fn">model</span>(x)        <span class="tk-com"># 每层 fwd 前 AllGather 权重</span></span>
+    loss = <span class="tk-fn">loss_fn</span>(out, y)
+<span class="anchor">    loss.<span class="tk-fn">backward</span>()    <span class="tk-com"># AllGather 权重 + ReduceScatter 梯度</span></span>
+    optimizer.<span class="tk-fn">step</span>()   <span class="tk-com"># 只更新本卡持有的那 1/N 分片</span></code></pre>
+      </div>
+      <p class="muted" style="font-size:13px">两个高亮处都会触发 NCCL：<code style="color:var(--coral)">forward</code> 里每层进出做 <code>ncclAllGather</code>；<code style="color:var(--coral)">backward</code> 里 AllGather 取权重、再 <code>ncclReduceScatter</code> 收梯度分片。</p>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- ============================ 3c. TP ============================ -->
+<section id="tp">
+<div class="wrap">
+  <div class="sec-head reveal"><span class="sec-num">03·C</span><h2>TP — 张量并行</h2></div>
+  <p class="sec-lead reveal">DDP/FSDP 切的是"数据/参数的拥有权"，<b>单层计算仍在一张卡上完成</b>。TP 不一样：它把<b>单个矩阵乘法本身横/竖切开</b>，分给多张卡并行算，再用集合通信把结果<b>拼回</b>。用于单层都大到放不下、或想压低单层延迟的超大模型（Megatron-LM 的做法）。</p>
+
+  <div class="viz reveal">
+    <div class="viz-head"><span class="viz-title">▣ Megatron MLP：列切 → 行切，一次前向只需 1 个 AllReduce</span><span class="viz-sub">Y = Dropout( GeLU(X·A) · B )</span></div>
+    <svg viewBox="0 0 920 340" role="img">
+      <defs><marker id="ar4" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#9d8cff"/></marker></defs>
+      <!-- input X -->
+      <rect x="40" y="140" width="90" height="56" rx="8" fill="#16202c" stroke="#2c3e52"/><text x="85" y="165" text-anchor="middle" fill="#fff" font-family="IBM Plex Mono" font-size="13">X</text><text x="85" y="182" text-anchor="middle" fill="#5e7a92" font-family="IBM Plex Mono" font-size="9">输入(每卡相同)</text>
+
+      <!-- A column-split: GPU0 / GPU1 -->
+      <text x="200" y="40" fill="#c4f536" font-family="IBM Plex Mono" font-size="11">A 按列切 (column-parallel)</text>
+      <rect x="200" y="60" width="150" height="56" rx="8" fill="#101a12" stroke="#8aa826"/><text x="275" y="84" text-anchor="middle" fill="#c4f536" font-family="IBM Plex Mono" font-size="11">GPU0:  X·A₁</text><text x="275" y="101" text-anchor="middle" fill="#7e92a6" font-family="IBM Plex Mono" font-size="9">GeLU →</text>
+      <rect x="200" y="220" width="150" height="56" rx="8" fill="#101a12" stroke="#8aa826"/><text x="275" y="244" text-anchor="middle" fill="#c4f536" font-family="IBM Plex Mono" font-size="11">GPU1:  X·A₂</text><text x="275" y="261" text-anchor="middle" fill="#7e92a6" font-family="IBM Plex Mono" font-size="9">GeLU →</text>
+      <line x1="130" y1="160" x2="200" y2="88" stroke="#5e7a92" stroke-width="1.4"/>
+      <line x1="130" y1="176" x2="200" y2="248" stroke="#5e7a92" stroke-width="1.4"/>
+      <text x="150" y="120" fill="#5e7a92" font-family="IBM Plex Mono" font-size="9">无需通信</text>
+
+      <!-- B row-split -->
+      <text x="400" y="40" fill="#ff5d52" font-family="IBM Plex Mono" font-size="11">B 按行切 (row-parallel)</text>
+      <rect x="400" y="60" width="150" height="56" rx="8" fill="#1a1010" stroke="#b8403a"/><text x="475" y="90" text-anchor="middle" fill="#ff8078" font-family="IBM Plex Mono" font-size="11">GPU0: (·)·B₁</text>
+      <rect x="400" y="220" width="150" height="56" rx="8" fill="#1a1010" stroke="#b8403a"/><text x="475" y="250" text-anchor="middle" fill="#ff8078" font-family="IBM Plex Mono" font-size="11">GPU1: (·)·B₂</text>
+      <line x1="350" y1="88" x2="400" y2="88" stroke="#8aa826" stroke-width="1.5"/>
+      <line x1="350" y1="248" x2="400" y2="248" stroke="#b8403a" stroke-width="1.5"/>
+
+      <!-- AllReduce merge -->
+      <rect x="600" y="138" width="150" height="60" rx="9" fill="#101620" stroke="#9d8cff"/><text x="675" y="164" text-anchor="middle" fill="#9d8cff" font-family="IBM Plex Mono" font-size="12" font-weight="600">AllReduce</text><text x="675" y="182" text-anchor="middle" fill="#7e92a6" font-family="IBM Plex Mono" font-size="9">两半部分和相加</text>
+      <line x1="550" y1="88" x2="600" y2="155" stroke="#9d8cff" stroke-width="1.5" marker-end="url(#ar4)"/>
+      <line x1="550" y1="248" x2="600" y2="182" stroke="#9d8cff" stroke-width="1.5" marker-end="url(#ar4)"/>
+
+      <!-- output -->
+      <rect x="800" y="140" width="90" height="56" rx="8" fill="#16202c" stroke="#3dd6d0"/><text x="845" y="165" text-anchor="middle" fill="#3dd6d0" font-family="IBM Plex Mono" font-size="13">Y</text><text x="845" y="182" text-anchor="middle" fill="#5e7a92" font-family="IBM Plex Mono" font-size="9">完整输出</text>
+      <line x1="750" y1="168" x2="800" y2="168" stroke="#3dd6d0" stroke-width="1.5"/>
+
+      <text x="40" y="312" fill="#7e92a6" font-family="IBM Plex Mono" font-size="11">★ 精妙之处：列切 + 行切搭配，整个 MLP 块前向只在最后做 <tspan fill="#9d8cff">1 次 AllReduce</tspan>，反向同样 1 次。通信极省。</text>
+    </svg>
+  </div>
+
+  <div class="grid2">
+    <div>
+      <h3>用到的原语</h3>
+      <table>
+        <tr><th>时机</th><th>原语</th></tr>
+        <tr><td>前向：合并行切结果</td><td><b style="color:#9d8cff">AllReduce</b></td></tr>
+        <tr><td>反向：合并输入梯度</td><td><b style="color:#9d8cff">AllReduce</b></td></tr>
+        <tr><td>有时切序列/词表</td><td><b style="color:#ff5d52">AllGather</b> / <b style="color:#9d8cff">All-to-All</b></td></tr>
+      </table>
+      <div class="callout"><b>注意通信位置：</b> TP 的 AllReduce 在<u>每一层内部、前向和反向各一次</u>，频率远高于 DDP（每步一次）。所以 TP 几乎只在<b>单节点 NVLink 内</b>用——跨机带宽撑不住。</div>
+    </div>
+    <div>
+      <h3>锚定代码 <span class="muted" style="font-size:13px">Megatron 风格</span></h3>
+      <div class="code">
+        <div class="hd"><span class="fn">tp_mlp.py</span><span class="tag">column + row parallel</span></div>
+<pre><code><span class="tk-key">class</span> <span class="tk-cls">ParallelMLP</span>(nn.Module):
+    <span class="tk-key">def</span> <span class="tk-fn">__init__</span>(self):
+        <span class="tk-com"># A: 按列切，输出维度分到各卡</span>
+        self.fc1 = <span class="tk-fn">ColumnParallelLinear</span>(h, 4*h)
+        <span class="tk-com"># B: 按行切，配 reduce 合并</span>
+        self.fc2 = <span class="tk-fn">RowParallelLinear</span>(4*h, h)
+
+    <span class="tk-key">def</span> <span class="tk-fn">forward</span>(self, x):
+        x = <span class="tk-fn">gelu</span>(self.<span class="tk-fn">fc1</span>(x))   <span class="tk-com"># 本地，无通信</span>
+<span class="anchor">        x = self.<span class="tk-fn">fc2</span>(x)         <span class="tk-com"># row-parallel 末尾→AllReduce</span></span>
+        <span class="tk-key">return</span> x
+
+<span class="tk-com"># RowParallelLinear 内部本质：</span>
+<span class="tk-key">def</span> <span class="tk-fn">forward</span>(self, x):
+    y = x @ self.weight_shard      <span class="tk-com"># 各卡算部分和</span>
+<span class="anchor">    dist.<span class="tk-fn">all_reduce</span>(y)            <span class="tk-com"># ← ncclAllReduce 合并</span></span>
+    <span class="tk-key">return</span> y</code></pre>
+      </div>
+      <p class="muted" style="font-size:13px">高亮行：<code style="color:var(--violet)">all_reduce(y)</code> 把两张卡的"部分和"加成完整输出。这正是第 2 节 AllReduce 动画演示的操作，只不过这里的"数据"是一个矩阵乘的中间结果。</p>
+    </div>
+  </div>
+
+  <h3>三者一图对比</h3>
+  <table class="reveal">
+    <tr><th></th><th>切什么</th><th>每卡存</th><th>核心原语</th><th>通信频率</th><th>典型场景</th></tr>
+    <tr><td><b style="color:#c4f536">DDP</b></td><td>数据批次</td><td>整个模型</td><td>AllReduce</td><td>每 step 1 次</td><td>模型放得下单卡</td></tr>
+    <tr><td><b style="color:#ff5d52">FSDP</b></td><td>参数/梯度/优化器</td><td>1/N 分片</td><td>AllGather + ReduceScatter</td><td>每层多次</td><td>模型放不下单卡</td></tr>
+    <tr><td><b style="color:#9d8cff">TP</b></td><td>单层矩阵乘</td><td>权重的一片列/行</td><td>AllReduce</td><td>每层前/反向各 1 次</td><td>单层都太大 / 压延迟，限 NVLink 内</td></tr>
+  </table>
+  <div class="callout tip"><b>真实大模型怎么配？</b> 通常 <b>3D 并行</b>：节点内 TP（吃 NVLink）× 跨节点 FSDP/DP（吃 IB）× 层间 Pipeline 并行。NCCL 为每种并行各建一个 <span class="kbd">communicator</span>（进程组），互不干扰地同时跑。</div>
+</div>
+</section>
+
+<!-- ============================ 4. 调试 ============================ -->
+<section id="debug">
+<div class="wrap">
+  <div class="sec-head reveal"><span class="sec-num">04</span><h2>实战调试速查</h2></div>
+  <p class="sec-lead reveal">真正写分布式训练时，90% 的 NCCL 问题靠这几个环境变量和报错模式定位。</p>
+
+  <div class="grid2">
+    <div>
+      <h3>常用环境变量</h3>
+      <div class="code">
+        <div class="hd"><span class="fn">launch.sh</span><span class="tag">env</span></div>
+<pre><code><span class="tk-com"># 打印 NCCL 选了哪条路径（第一招）</span>
+<span class="tk-key">export</span> NCCL_DEBUG=INFO
+
+<span class="tk-com"># 指定走哪块网卡（多网卡机器常踩坑）</span>
+<span class="tk-key">export</span> NCCL_SOCKET_IFNAME=eth0
+<span class="tk-key">export</span> NCCL_IB_HCA=mlx5
+
+<span class="tk-com"># 排障用：关掉某条路径看是否它的锅</span>
+<span class="tk-key">export</span> NCCL_P2P_DISABLE=1    <span class="tk-com"># 关 NVLink P2P</span>
+<span class="tk-key">export</span> NCCL_IB_DISABLE=1     <span class="tk-com"># 关 InfiniBand，退回 socket</span></code></pre>
+      </div>
+    </div>
+    <div>
+      <h3>报错对照表</h3>
+      <table>
+        <tr><th>症状</th><th>多半是</th></tr>
+        <tr><td><b>NCCL timeout</b> / watchdog</td><td>某个 rank 没到（挂了/分支不一致），所有卡死等</td></tr>
+        <tr><td><b>unhandled system error</b></td><td>网卡/IB 没配好，或 <code>IFNAME</code> 选错</td></tr>
+        <tr><td>训练能跑但<b>慢</b></td><td>回退到了 socket/PCIe；看 <code>DEBUG=INFO</code> 是否走了 NVLink/IB</td></tr>
+        <tr><td>启动即 <b>hang</b></td><td>master 地址/端口不通，或进程组数对不上</td></tr>
+      </table>
+      <div class="callout tip"><b>性能基准：</b> 用 <span class="kbd">nccl-tests</span> 的 <code>all_reduce_perf -b 8 -e 2G -g 8</code> 测真实带宽，对照硬件理论值，能快速判断"是不是 NCCL 没走对线"。</div>
+    </div>
+  </div>
+
+  <div class="callout"><b>规则：集合调用必须对齐。</b> 所有 rank 必须以相同顺序、相同 shape 调用同一个集合原语。代码里出现 <code>if rank==0: all_reduce(...)</code> 这种分支，就是 timeout 的经典原因——0 号在通信，别人在等它做别的事。</div>
+</div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <p class="f"><b>NCCL 全解</b> · 物理实现 → 集合原语 → DDP / FSDP / TP → 代码锚点 → 调试</p>
+    <p class="f" style="margin-top:8px">单文件交互式教学页 · 所有图示为示意，带宽数字为典型量级 · 用 <span class="kbd">←</span> <span class="kbd">→</span> 操作 Ring 动画</p>
+  </div>
+</footer>
+
+<script>
+/* =========================================================
+   palette
+========================================================= */
+const C = { 0:'#c4f536', 1:'#ff5d52', 2:'#3dd6d0', 3:'#9d8cff', sum:'#ffb13d', empty:'#1a2330', emptyStroke:'#2c3e52' };
+const NS = 'http://www.w3.org/2000/svg';
+function el(tag, attrs){ const e=document.createElementNS(NS,tag); for(const k in attrs) e.setAttribute(k,attrs[k]); return e; }
+
+/* =========================================================
+   PART A — generic primitive visualizer (before/after)
+   4 GPUs as columns, each with 4 stacked chunk cells.
+========================================================= */
+const PRIMS = {
+  AllReduce: {
+    formula: '各卡完整数据 → 各卡都得到 Σ',
+    explain: '<b>输入</b>：每张卡都有一份完整数据。<b>输出</b>：每张卡都拿到「所有卡对应位置<u>求和</u>(ncclSum)」的结果。<span class="use">用途：DDP 每步同步梯度——最高频的集合操作。</span> <span class="fw">底层 = ReduceScatter + AllGather；注意 NCCL 只求和，平均由框架做。</span>',
+    // before: each gpu has 4 chunks all its own color
+    before: g => [g,g,g,g],
+    after:  g => ['sum','sum','sum','sum'],
+  },
+  ReduceScatter: {
+    formula: '各卡有全部块 → 各卡只留自己那块的和',
+    explain: '<b>输入</b>：每张卡都有来自所有卡的 4 个块。<b>输出</b>：卡 i 只保留「第 i 个位置的全和」，其余丢弃。<span class="use">用途：FSDP 反向收梯度、ZeRO。</span> <span class="fw">是 AllReduce 的前半段。</span>',
+    before: g => [0,1,2,3],            // every gpu holds all colors
+    after:  g => g===0?['sum',null,null,null]:g===1?[null,'sum',null,null]:g===2?[null,null,'sum',null]:[null,null,null,'sum'],
+  },
+  AllGather: {
+    formula: '各卡有一块 → 各卡拼出完整数据',
+    explain: '<b>输入</b>：卡 i 只持有第 i 块。<b>输出</b>：每张卡都拼齐全部 4 块。<span class="use">用途：FSDP 前/反向临时凑出完整层权重、TP 收集分片。</span> <span class="fw">是 AllReduce 的后半段。</span>',
+    before: g => { const a=[null,null,null,null]; a[g]=g; return a; },
+    after:  g => [0,1,2,3],
+  },
+  Broadcast: {
+    formula: 'root(GPU0) 有数据 → 所有卡复制',
+    explain: '<b>输入</b>：只有 root（这里 GPU0）持有数据。<b>输出</b>：所有卡都得到 root 的同一份拷贝。<span class="use">用途：训练开始时把初始权重从 rank0 同步给所有卡。</span>',
+    before: g => g===0?[0,0,0,0]:[null,null,null,null],
+    after:  g => [0,0,0,0],
+  },
+  'All-to-All': {
+    formula: '每卡持有发往所有卡的分片 → 转置',
+    explain: '<b>输入</b>：卡 i 的第 j 块是「i 要发给 j 的数据」。<b>输出</b>：卡 j 收齐「所有卡发给 j 的数据」——相当于矩阵转置。<span class="use">用途：MoE 专家并行路由、序列并行。</span>',
+    before: g => [g,g,g,g].map((_,j)=>g),  // gpu g holds chunks colored by g (dest j)
+    after:  g => [0,1,2,3],                // after: gpu g holds one chunk from each source
+  },
+};
+const PRIM_ORDER = ['AllReduce','ReduceScatter','AllGather','Broadcast','All-to-All'];
+let curPrim = 'AllReduce', primShown = 'before';
+
+const primSvg = document.getElementById('primSvg');
+const GX = [70, 280, 490, 700], GW = 150, CELL = 44, CY0 = 90;
+
+function chunkColor(v){
+  if(v===null||v===undefined) return C.empty;
+  if(v==='sum') return C.sum;
+  return C[v];
+}
+function chunkLabel(v){
+  if(v===null||v===undefined) return '·';
+  if(v==='sum') return 'Σ';
+  return v;
+}
+function drawPrim(state){
+  primSvg.innerHTML='';
+  const spec = PRIMS[curPrim];
+  for(let g=0; g<4; g++){
+    // gpu frame
+    primSvg.appendChild(el('rect',{x:GX[g],y:50,width:GW,height:30,rx:7,fill:'#16202c',stroke:'#2c3e52'}));
+    const t=el('text',{x:GX[g]+GW/2,y:70,'text-anchor':'middle',fill:'#fff','font-family':'IBM Plex Mono','font-size':13,'font-weight':600}); t.textContent='GPU'+g; primSvg.appendChild(t);
+    const cells = state==='before'? spec.before(g) : spec.after(g);
+    for(let i=0;i<4;i++){
+      const v = cells[i];
+      const y = CY0 + i*(CELL+6);
+      const rect = el('rect',{x:GX[g]+18,y:y,width:GW-36,height:CELL,rx:6,
+        fill:chunkColor(v),stroke:(v===null||v===undefined)?C.emptyStroke:'none',opacity:(v===null||v===undefined)?.5:1});
+      rect.style.transition='all .5s cubic-bezier(.3,.8,.3,1)';
+      primSvg.appendChild(rect);
+      const lab=el('text',{x:GX[g]+GW/2,y:y+CELL/2+5,'text-anchor':'middle',
+        fill:(v==='sum')?'#1a1a00':(v===null||v===undefined)?'#5e7a92':'#0a0e14',
+        'font-family':'IBM Plex Mono','font-size':14,'font-weight':600});
+      lab.textContent = chunkLabel(v);
+      primSvg.appendChild(lab);
+    }
+  }
+  // state label
+  const sl=el('text',{x:460,y:340,'text-anchor':'middle',fill: state==='before'?'#7e92a6':'#c4f536','font-family':'IBM Plex Mono','font-size':13});
+  sl.textContent = state==='before' ? '◍ 通信前 (before)' : '✓ 通信后 (after)';
+  primSvg.appendChild(sl);
+}
+function selectPrim(name){
+  curPrim=name; primShown='before';
+  document.getElementById('primName').textContent=name;
+  document.getElementById('primFormula').textContent=PRIMS[name].formula;
+  document.getElementById('primExplain').innerHTML=PRIMS[name].explain;
+  document.getElementById('primStep').innerHTML='当前：<b>通信前 (输入)</b>';
+  document.getElementById('primPlay').textContent='看「通信后」结果 ▶';
+  drawPrim('before');
+}
+// build tabs
+const tabsBox=document.getElementById('primTabs');
+PRIM_ORDER.forEach((n,i)=>{
+  const b=document.createElement('button'); b.className='tab'+(i===0?' active':''); b.textContent=n;
+  b.onclick=()=>{ document.querySelectorAll('#primTabs .tab').forEach(x=>x.classList.remove('active')); b.classList.add('active'); selectPrim(n); };
+  tabsBox.appendChild(b);
+});
+document.getElementById('primPlay').onclick=function(){
+  primShown = primShown==='before'?'after':'before';
+  drawPrim(primShown);
+  document.getElementById('primStep').innerHTML='当前：<b>'+(primShown==='before'?'通信前 (输入)':'通信后 (输出)')+'</b>';
+  this.textContent = primShown==='before'?'看「通信后」结果 ▶':'⟲ 回到「通信前」';
+};
+document.getElementById('primReset').onclick=()=>selectPrim(curPrim);
+selectPrim('AllReduce');
+
+/* =========================================================
+   PART B — general step-through engine for ALL 5 ops (N=4)
+   cell descriptors:
+     null                      -> empty
+     {kind:'set', ids:Set}     -> reduce semantics (color by size: 1→owner, mid→partial, N→Σ)
+     {kind:'one', id}          -> single owner copy (gather/broadcast)
+     {kind:'pair', src, dst}   -> all-to-all block "src→dst" (color by src)
+   transfer: {from, to, fromC, toC}  (fromC=-1 means whole buffer / all chunks)
+========================================================= */
+const RN=4;
+const ringSvg=document.getElementById('ringSvg');
+const ringPos=[ {x:460,y:70}, {x:760,y:230}, {x:460,y:380}, {x:160,y:230} ];
+
+function cloneState(st){
+  return st.map(row=>row.map(c=>{
+    if(!c) return null;
+    if(c.kind==='set') return {kind:'set', ids:new Set(c.ids)};
+    return Object.assign({},c);
+  }));
+}
+function cellFill(c){
+  if(!c) return C.empty;
+  if(c.kind==='set'){ if(c.ids.size===RN) return C.sum; if(c.ids.size===1) return C[[...c.ids][0]]; return '#5d7a8f'; }
+  if(c.kind==='one') return C[c.id];
+  if(c.kind==='pair') return C[c.src];
+}
+function cellLabel(c){
+  if(!c) return '·';
+  if(c.kind==='set'){ if(c.ids.size===RN) return 'Σ'; return [...c.ids].sort().join('+'); }
+  if(c.kind==='one') return ''+c.id;
+  if(c.kind==='pair') return c.src+'→'+c.dst;
+}
+
+/* ---- builders: each returns {steps} ; step={state,transfers,phase,note} ---- */
+function initSet(){ const st=[]; for(let g=0;g<RN;g++){const r=[];for(let c=0;c<RN;c++)r.push({kind:'set',ids:new Set([g])});st.push(r);} return st; }
+
+function buildAllReduce(){
+  let state=initSet();
+  const steps=[{state:cloneState(state),transfers:[],phase:'阶段：就绪',note:'初始：每张卡持有完整向量。chunk c 在 GPU g 上 = GPU g 对位置 c 的值(颜色=g)。环方向 0→1→2→3→0。'}];
+  // reduce-scatter
+  for(let s=0;s<RN-1;s++){
+    const transfers=[], next=cloneState(state);
+    for(let g=0;g<RN;g++){ const c=((g-s)%RN+RN)%RN; transfers.push({from:g,to:(g+1)%RN,fromC:c,toC:c}); }
+    for(const t of transfers){ const m=new Set([...next[t.to][t.toC].ids,...state[t.from][t.fromC].ids]); next[t.to][t.toC]={kind:'set',ids:m}; }
+    state=next;
+    steps.push({state:cloneState(state),transfers,phase:'阶段 ① ReduceScatter（累加）',note:`ReduceScatter ${s+1}/${RN-1}：每卡把一个 chunk 发给右邻并相加(ncclSum)。每条链路同时在传不同 chunk——无热点。`});
+  }
+  // all-gather
+  for(let s=0;s<RN-1;s++){
+    const transfers=[], next=cloneState(state);
+    for(let g=0;g<RN;g++){ const c=((g+1-s)%RN+RN)%RN; transfers.push({from:g,to:(g+1)%RN,fromC:c,toC:c}); }
+    for(const t of transfers){ next[t.to][t.toC]={kind:'set',ids:new Set(state[t.from][t.fromC].ids)}; }
+    state=next;
+    steps.push({state:cloneState(state),transfers,phase:'阶段 ② AllGather（传播全和）',note:`AllGather ${s+1}/${RN-1}：把已算好的全和 chunk(Σ) 沿环复制给右邻，直到人手一份完整结果。`});
+  }
+  steps[steps.length-1].note+=' ✓ 完成：每卡都得到 Σ。AllReduce = ReduceScatter + AllGather。';
+  return steps;
+}
+
+function buildReduceScatter(){
+  let state=initSet();
+  const steps=[{state:cloneState(state),transfers:[],phase:'阶段：就绪',note:'初始：每张卡都持有来自自己的全部 4 个 chunk(颜色=g)。目标：卡 i 最终只保留「第 i 个 chunk 的全和」。'}];
+  for(let s=0;s<RN-1;s++){
+    const transfers=[], next=cloneState(state);
+    for(let g=0;g<RN;g++){ const c=((g-s)%RN+RN)%RN; transfers.push({from:g,to:(g+1)%RN,fromC:c,toC:c}); }
+    for(const t of transfers){ const m=new Set([...next[t.to][t.toC].ids,...state[t.from][t.fromC].ids]); next[t.to][t.toC]={kind:'set',ids:m}; }
+    state=next;
+    steps.push({state:cloneState(state),transfers,phase:'ReduceScatter（累加）',note:`第 ${s+1}/${RN-1} 步：沿环把 chunk 发给右邻并相加。`});
+  }
+  steps[steps.length-1].note+=' ✓ 每卡恰好攒齐一个 Σ chunk(其余灰色部分和会被丢弃)。这正是 AllReduce 的前半段。';
+  return steps;
+}
+
+function buildAllGather(){
+  let state=[]; for(let g=0;g<RN;g++){const r=[];for(let c=0;c<RN;c++)r.push(c===g?{kind:'one',id:g}:null);state.push(r);}
+  const steps=[{state:cloneState(state),transfers:[],phase:'阶段：就绪',note:'初始：卡 i 只持有第 i 块(颜色=i)，其余为空(·)。目标：每卡拼齐全部 4 块。'}];
+  for(let s=0;s<RN-1;s++){
+    const transfers=[], next=cloneState(state);
+    for(let g=0;g<RN;g++){ const c=((g-s)%RN+RN)%RN; transfers.push({from:g,to:(g+1)%RN,fromC:c,toC:c}); }
+    for(const t of transfers){ next[t.to][t.toC]=Object.assign({},state[t.from][t.fromC]); }
+    state=next;
+    steps.push({state:cloneState(state),transfers,phase:'AllGather（沿环传递）',note:`第 ${s+1}/${RN-1} 步：每卡把刚拿到的块继续转发给右邻。`});
+  }
+  steps[steps.length-1].note+=' ✓ 每卡集齐 4 块。这是 AllReduce 的后半段，也是 FSDP 取权重用的原语。';
+  return steps;
+}
+
+function buildBroadcast(){
+  let state=[]; for(let g=0;g<RN;g++){const r=[];for(let c=0;c<RN;c++)r.push(g===0?{kind:'one',id:0}:null);state.push(r);}
+  const have=[true,false,false,false];
+  const steps=[{state:cloneState(state),transfers:[],phase:'阶段：就绪',note:'初始：只有 root=GPU0 持有数据(绿)。用二叉树广播：步数 = log₂(N) = 2，比逐个发更快。'}];
+  // tree: round1: 0->1 ; round2: 0->2, 1->3
+  const rounds=[ [[0,1]], [[0,2],[1,3]] ];
+  rounds.forEach((rd,ri)=>{
+    const transfers=[], next=cloneState(state);
+    for(const [f,t] of rd){ transfers.push({from:f,to:t,fromC:-1,toC:-1}); for(let c=0;c<RN;c++) next[t][c]={kind:'one',id:0}; have[t]=true; }
+    state=next;
+    steps.push({state:cloneState(state),transfers,phase:`二叉树广播 · 第 ${ri+1} 轮`,note:ri===0?'第 1 轮：root 发给 GPU1。':'第 2 轮：已有数据的 0 和 1 同时发给 2 和 3——并行翻倍。✓ 全员到手。'});
+  });
+  return steps;
+}
+
+function buildAllToAll(){
+  // gpu i slot j = block src=i,dst=j ; monochrome per gpu initially.
+  // Direct (non-relay): every block travels origin->dest in ONE hop, so reads come
+  // from the INITIAL snapshot, not the evolving state (otherwise slots get clobbered).
+  const init=[]; for(let i=0;i<RN;i++){const r=[];for(let j=0;j<RN;j++)r.push({kind:'pair',src:i,dst:j});init.push(r);}
+  let state=cloneState(init);
+  const steps=[{state:cloneState(state),transfers:[],phase:'阶段：就绪',note:'初始：卡 i 的第 j 格 = 「i→j」(i 要发给 j 的数据)，整卡同色(源=i)。目标：转置——卡 j 收齐所有源发给它的块。'}];
+  for(let r=1;r<RN;r++){
+    const transfers=[], next=cloneState(state);
+    for(let i=0;i<RN;i++){ const dst=(i+r)%RN; transfers.push({from:i,to:dst,fromC:dst,toC:i}); }
+    // place received block at slot = source id, copied from the ORIGINAL block
+    for(const t of transfers){ next[t.to][t.toC]=Object.assign({},init[t.from][t.fromC]); }
+    state=next;
+    steps.push({state:cloneState(state),transfers,phase:`All-to-All · 第 ${r}/${RN-1} 轮`,note:`第 ${r} 轮：每卡把「发往距离 ${r} 的那张卡」的块直接发过去(落到对方第 i 格)。对角块 i→i 留在原地。`});
+  }
+  steps[steps.length-1].note+=' ✓ 完成转置：卡 j 的第 i 格 = i→j，集齐了来自所有源、发给自己的块(变成彩虹)。';
+  return steps;
+}
+
+const OPS={
+  'AllReduce':{build:buildAllReduce, sub:'Ring：先 ReduceScatter 再 AllGather，共 2(N−1)=6 步'},
+  'ReduceScatter':{build:buildReduceScatter, sub:'Ring：N−1=3 步，每卡只留自己那片的和'},
+  'AllGather':{build:buildAllGather, sub:'Ring：N−1=3 步，把各自的块传一圈'},
+  'Broadcast':{build:buildBroadcast, sub:'二叉树：log₂(N)=2 步，root 把数据扩散给所有卡'},
+  'All-to-All':{build:buildAllToAll, sub:'转置：N−1=3 轮，每卡的同色块散给所有人、再集齐彩虹'},
+};
+const OP_ORDER=['AllReduce','ReduceScatter','AllGather','Broadcast','All-to-All'];
+
+let curOp='AllReduce', ringSteps=OPS[curOp].build(), ringIdx=0, ringTimer=null;
+
+function drawRing(){
+  ringSvg.innerHTML='';
+  const step=ringSteps[ringIdx];
+  // faint ring backbone
+  for(let g=0; g<RN; g++){
+    const a=ringPos[g], b=ringPos[(g+1)%RN];
+    ringSvg.appendChild(el('line',{x1:a.x,y1:a.y,x2:b.x,y2:b.y,stroke:'#1f2c3a','stroke-width':1.4,'stroke-dasharray':'4 4',opacity:.5}));
+  }
+  // active transfer lines (handles non-adjacent: tree / all-to-all)
+  for(const t of step.transfers){
+    const a=ringPos[t.from], b=ringPos[t.to];
+    ringSvg.appendChild(el('line',{x1:a.x,y1:a.y,x2:b.x,y2:b.y,stroke:'#c4f536','stroke-width':2.4,opacity:.85}));
+  }
+  // nodes
+  for(let g=0; g<RN; g++){
+    const p=ringPos[g];
+    const bw=128, bh=92, x=p.x-bw/2, y=p.y-bh/2;
+    ringSvg.appendChild(el('rect',{x:x,y:y,width:bw,height:bh,rx:10,fill:'#0f1620',stroke:'#2c3e52','stroke-width':1.5}));
+    const lbl=el('text',{x:p.x,y:y-8,'text-anchor':'middle',fill:'#fff','font-family':'IBM Plex Mono','font-size':12,'font-weight':600}); lbl.textContent='GPU'+g; ringSvg.appendChild(lbl);
+    const cw=28, gap=3, startx=x+(bw-(cw*4+gap*3))/2;
+    for(let c=0;c<RN;c++){
+      const cell=step.state[g][c];
+      const cx=startx+c*(cw+gap), cy=y+24;
+      const empty=!cell;
+      const isSending = step.transfers.some(t=>t.from===g && (t.fromC===-1||t.fromC===c));
+      ringSvg.appendChild(el('rect',{x:cx,y:cy,width:cw,height:42,rx:5,fill:cellFill(cell),
+        opacity:empty?.5:1,stroke:isSending?'#c4f536':(empty?C.emptyStroke:'none'),'stroke-width':isSending?3:(empty?1:0)}));
+      const lab=cellLabel(cell);
+      const tl=el('text',{x:cx+cw/2,y:cy+ (cell&&cell.kind==='pair'?20:24),'text-anchor':'middle',
+        fill:empty?'#5e7a92':'#0a0e14','font-family':'IBM Plex Mono','font-size':cell&&cell.kind==='pair'?10:13,'font-weight':600});
+      tl.textContent=lab; ringSvg.appendChild(tl);
+      const ci=el('text',{x:cx+cw/2,y:cy+38,'text-anchor':'middle',fill:empty?'#5e7a92':'#0a0e14','font-family':'IBM Plex Mono','font-size':8,opacity:.55});
+      ci.textContent='c'+c; ringSvg.appendChild(ci);
+    }
+  }
+  // moving dots
+  for(const t of step.transfers){
+    const a=ringPos[t.from], b=ringPos[t.to];
+    const dot=el('circle',{cx:a.x,cy:a.y,r:6,fill:'#c4f536'});
+    dot.appendChild(el('animate',{attributeName:'cx',from:a.x,to:b.x,dur:'0.9s',repeatCount:'indefinite'}));
+    dot.appendChild(el('animate',{attributeName:'cy',from:a.y,to:b.y,dur:'0.9s',repeatCount:'indefinite'}));
+    ringSvg.appendChild(dot);
+  }
+  document.getElementById('ringPhase').textContent=step.phase;
+  document.getElementById('ringStep').textContent=`第 ${ringIdx} / ${ringSteps.length-1} 步`;
+  document.getElementById('ringExplain').textContent=step.note;
+  document.getElementById('ringPrev').disabled = ringIdx===0;
+  document.getElementById('ringNext').disabled = ringIdx===ringSteps.length-1;
+}
+function selectOp(name){
+  curOp=name; ringSteps=OPS[name].build(); ringIdx=0; stopAuto();
+  document.getElementById('ringSub').textContent=OPS[name].sub;
+  drawRing();
+}
+const ddTabs=document.getElementById('ddTabs');
+OP_ORDER.forEach((n,i)=>{
+  const b=document.createElement('button'); b.className='tab'+(i===0?' active':''); b.textContent=n;
+  b.onclick=()=>{ document.querySelectorAll('#ddTabs .tab').forEach(x=>x.classList.remove('active')); b.classList.add('active'); selectOp(n); };
+  ddTabs.appendChild(b);
+});
+document.getElementById('ringNext').onclick=()=>{ if(ringIdx<ringSteps.length-1){ringIdx++;drawRing();} };
+document.getElementById('ringPrev').onclick=()=>{ if(ringIdx>0){ringIdx--;drawRing();} };
+document.getElementById('ringReset').onclick=()=>{ ringIdx=0; stopAuto(); drawRing(); };
+function stopAuto(){ if(ringTimer){clearInterval(ringTimer);ringTimer=null; document.getElementById('ringAuto').textContent='⏩ 自动播放';} }
+document.getElementById('ringAuto').onclick=function(){
+  if(ringTimer){ stopAuto(); return; }
+  this.textContent='⏸ 暂停';
+  ringTimer=setInterval(()=>{ if(ringIdx>=ringSteps.length-1){ ringIdx=0; } else ringIdx++; drawRing(); },1500);
+};
+document.addEventListener('keydown',e=>{
+  if(e.key==='ArrowRight') document.getElementById('ringNext').click();
+  if(e.key==='ArrowLeft') document.getElementById('ringPrev').click();
+});
+selectOp('AllReduce');
+
+/* =========================================================
+   reveal on scroll
+========================================================= */
+const io=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting)e.target.classList.add('in');});},{threshold:.12});
+document.querySelectorAll('.reveal').forEach(x=>io.observe(x));
+</script>
+</body>
+</html>
