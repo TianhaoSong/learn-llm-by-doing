@@ -371,6 +371,15 @@ footer .f b{color:var(--lime)}
   <div class="callout tip"><b>先说清"一步"是什么意思（否则你点了也不知道在看啥）：</b> 这里的<u>每一步 = 所有 GPU 同时各发一个 chunk 给它的右邻居、同时各收一个</u>。不是"GPU0 发完轮到 GPU1"，而是 4 条链路<b>并发</b>跑——这正是环最聪明的地方（没有任何一张卡是热点）。所以 N=4 张卡的 AllReduce 需要 <code>2(N−1)=6</code> 步：前 3 步累加（ReduceScatter），后 3 步传播结果（AllGather）。看图时盯住：<b>绿色描边的格子</b>=这一步正在被发送的 chunk，<b>飞动的小绿点</b>=数据在链路上移动，格子里的 <b>0/1/2/3</b>=数据来自哪张卡，<b>a+b / Σ</b>=已经累加了哪些卡的值。</div>
   <p class="muted">每个动画都是<b>严格按真实算法推导</b>的状态机，不是随便画的示意：<b>AllReduce / ReduceScatter / AllGather</b> 用 Ring，<b>Broadcast</b> 用二叉树，<b>All-to-All</b> 是逐轮转置。</p>
 
+  <div class="callout tip"><b>把这三个量分开记，是看懂动画、也是算对带宽的关键（最常见的卡点）：</b> 环上每一步、每条链路<u>永远只传 1 个 chunk = 1/N 的数据</u>——哪怕这个 chunk 里已经累加了好几张卡的值。因为加法是<b>逐元素相加</b>，结果还是<u>同样大小的一个 chunk</u>（<code>[1,2,3]+[4,5,6]=[5,7,9]</code>，仍是 3 个数，不是 6 个）。所以"加法发生在传输途中"<b>不会让数据变大</b>，更不是 <code>1/N+2/N+…</code> 那样递增——变多的是 chunk 里"住了几张卡的值"，不是它的字节数。
+  <table style="margin-top:12px;margin-bottom:4px">
+    <tr><th>问的是什么</th><th>ReduceScatter</th><th>AllGather</th></tr>
+    <tr><td><b>每一步发送</b></td><td>1/N（恒定）</td><td>1/N（恒定）</td></tr>
+    <tr><td><b>总发送 = ×(N−1) 步</b></td><td>(N−1)/N</td><td>(N−1)/N</td></tr>
+    <tr><td><b>结束时每卡持有</b></td><td>1/N（一个全和块 Σ）</td><td>1（全部 N 块）</td></tr>
+  </table>
+  合起来：AllReduce <b>每卡</b>发送 <code>2(N−1)/N ≈ 2</code>（N→∞ 也只趋近 2，<u>与卡数无关</u>，这正是能扩到上千卡的原因）；<b>全系统</b>总发送 <code>2(N−1)</code>。"持有"会从 1/N 涨到 1（因为一直在收别人的块），但"每步发送"恒定 1/N——两本账别并到一起算。</div>
+
   <div class="viz reveal">
     <div class="tabs" id="ddTabs"></div>
     <div class="viz-head">
@@ -435,6 +444,56 @@ footer .f b{color:var(--lime)}
       <text x="300" y="285" fill="#7e92a6" font-family="IBM Plex Mono" font-size="11">★ 唯一的通信就是这一次 AllReduce / step（按桶切成多次，与反向重叠）</text>
     </svg>
   </div>
+
+  <h3>同步：为什么 backward 要"等"，以及框架怎么把等待藏起来</h3>
+  <p class="muted">AllReduce 是<b>集合操作 = 全员路障(barrier)</b>：必须<u>所有卡的梯度都到齐</u>才能算出和，任何一张卡没算完，其余卡只能干等。这带来两个绕不开的问题，也带来一个关键优化。</p>
+
+  <div class="viz reveal">
+    <div class="viz-head"><span class="viz-title">▣ 落后者(straggler) + 计算/通信重叠(overlap)</span><span class="viz-sub">上：朴素做法 GPU 干等慢卡 · 下：边算边传，把通信藏进 backward</span></div>
+    <svg viewBox="0 0 920 320" role="img" aria-label="straggler and overlap timeline">
+      <defs><marker id="ar5" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#2c3e52"/></marker></defs>
+
+      <!-- ===== TOP: naive (wait for straggler) ===== -->
+      <text x="20" y="30" fill="#ff5d52" font-family="IBM Plex Mono" font-size="11" font-weight="600">朴素：先全算完 → 再 AllReduce</text>
+      <text x="20" y="58" fill="#7e92a6" font-family="IBM Plex Mono" font-size="10">GPU0</text>
+      <text x="20" y="92" fill="#7e92a6" font-family="IBM Plex Mono" font-size="10">GPU3</text>
+      <!-- gpu0 backward fast -->
+      <rect x="70" y="44" width="150" height="24" rx="5" fill="#1a1410" stroke="#b8403a"/><text x="145" y="61" text-anchor="middle" fill="#ffb13d" font-family="IBM Plex Mono" font-size="10">backward</text>
+      <!-- gpu0 idle wait -->
+      <rect x="220" y="44" width="160" height="24" rx="5" fill="#15110f" stroke="#5e3530" stroke-dasharray="3 3"/><text x="300" y="61" text-anchor="middle" fill="#b8403a" font-family="IBM Plex Mono" font-size="10">空等 idle ⌛</text>
+      <!-- gpu3 backward slow -->
+      <rect x="70" y="78" width="310" height="24" rx="5" fill="#1a1410" stroke="#b8403a"/><text x="225" y="95" text-anchor="middle" fill="#ffb13d" font-family="IBM Plex Mono" font-size="10">backward（这张卡慢 = straggler）</text>
+      <!-- barrier line -->
+      <line x1="380" y1="38" x2="380" y2="110" stroke="#ff5d52" stroke-width="1.4" stroke-dasharray="2 2"/>
+      <text x="386" y="46" fill="#ff5d52" font-family="IBM Plex Mono" font-size="9">barrier：到齐才能开始</text>
+      <rect x="380" y="60" width="180" height="26" rx="5" fill="#101a12" stroke="#8aa826"/><text x="470" y="78" text-anchor="middle" fill="#c4f536" font-family="IBM Plex Mono" font-size="10">AllReduce(全部梯度)</text>
+      <text x="70" y="128" fill="#5e7a92" font-family="IBM Plex Mono" font-size="9.5">→ 快卡白白空等慢卡；通信和计算完全串行，时间被浪费。</text>
+
+      <!-- ===== BOTTOM: overlap ===== -->
+      <text x="20" y="178" fill="#c4f536" font-family="IBM Plex Mono" font-size="11" font-weight="600">DDP：反向边算边传（bucket + overlap）</text>
+      <text x="20" y="206" fill="#7e92a6" font-family="IBM Plex Mono" font-size="10">compute</text>
+      <text x="20" y="246" fill="#7e92a6" font-family="IBM Plex Mono" font-size="10">comm</text>
+      <!-- backward split into buckets (last layer first) -->
+      <rect x="70" y="192" width="95" height="24" rx="5" fill="#1a1410" stroke="#b8403a"/><text x="117" y="209" text-anchor="middle" fill="#ffb13d" font-family="IBM Plex Mono" font-size="9.5">grad 桶4</text>
+      <rect x="167" y="192" width="95" height="24" rx="5" fill="#1a1410" stroke="#b8403a"/><text x="214" y="209" text-anchor="middle" fill="#ffb13d" font-family="IBM Plex Mono" font-size="9.5">桶3</text>
+      <rect x="264" y="192" width="95" height="24" rx="5" fill="#1a1410" stroke="#b8403a"/><text x="311" y="209" text-anchor="middle" fill="#ffb13d" font-family="IBM Plex Mono" font-size="9.5">桶2</text>
+      <rect x="361" y="192" width="95" height="24" rx="5" fill="#1a1410" stroke="#b8403a"/><text x="408" y="209" text-anchor="middle" fill="#ffb13d" font-family="IBM Plex Mono" font-size="9.5">桶1（首层）</text>
+      <!-- comm buckets, shifted right, overlapping with next compute -->
+      <rect x="167" y="232" width="95" height="22" rx="5" fill="#101a12" stroke="#8aa826"/><text x="214" y="248" text-anchor="middle" fill="#c4f536" font-family="IBM Plex Mono" font-size="9.5">AR 桶4</text>
+      <rect x="264" y="232" width="95" height="22" rx="5" fill="#101a12" stroke="#8aa826"/><text x="311" y="248" text-anchor="middle" fill="#c4f536" font-family="IBM Plex Mono" font-size="9.5">AR 桶3</text>
+      <rect x="361" y="232" width="95" height="22" rx="5" fill="#101a12" stroke="#8aa826"/><text x="408" y="248" text-anchor="middle" fill="#c4f536" font-family="IBM Plex Mono" font-size="9.5">AR 桶2</text>
+      <!-- last bucket: exposed, nothing to overlap -->
+      <rect x="458" y="232" width="105" height="22" rx="5" fill="#15110f" stroke="#ffb13d"/><text x="510" y="248" text-anchor="middle" fill="#ffb13d" font-family="IBM Plex Mono" font-size="9.5">AR 桶1（裸露）</text>
+      <!-- connecting hints -->
+      <line x1="117" y1="216" x2="200" y2="232" stroke="#8aa826" stroke-width="1" opacity=".6"/>
+      <text x="70" y="278" fill="#5e7a92" font-family="IBM Plex Mono" font-size="9.5">→ 桶4 梯度一算完立刻开传，同时继续算桶3…通信被"藏"在计算后面。</text>
+      <text x="70" y="296" fill="#ffb13d" font-family="IBM Plex Mono" font-size="9.5">→ 只有最后一桶(首层梯度)后面没计算可重叠，必须裸等——且要等最慢的那张卡。</text>
+    </svg>
+  </div>
+
+  <div class="callout"><b>为什么非同步不可？</b> 数据并行下每张卡喂<u>不同批次</u>、算出<u>不同梯度</u>。若各自更新，N 份权重立刻分叉、不再是"同一个模型"。AllReduce 把梯度求和(再由框架除以 N)，让每张卡拿到<u>完全相同</u>的梯度 → 更新后权重始终一致。同步是正确性的要求，不是性能开销可省的东西。</div>
+
+  <div class="callout tip"><b>那"等"还剩多少？</b> 反向是从<u>最后一层往前</u>算的，某层梯度一出来就能立刻 AllReduce，不必等前面的层——这就是 overlap，把绝大部分通信藏进了 backward 的计算里。真正<u>裸露的等待只剩两块</u>：① 最后一桶(对应首层)梯度，它后面没有计算可重叠了；② 这一桶还要等<b>最慢的那张卡</b>(straggler)。straggler 可能源于数据加载不均、某卡降频发热、网络抖动、batch 内序列长短不齐——大集群训练的常见痛点。</div>
 
   <div class="grid2">
     <div>

@@ -16,42 +16,106 @@
 
 ### Sub-tasks
 
-1. **写 `mem_calc(n_params, optimizer, precision, batch, seq_len, n_layer, n_head, head_dim) -> dict`**——返回四块字节数：
+1. **写 `mem_calc(...)`**——返回四块显存（bytes）。签名 + 返回类型：
+   ```python
+   from dataclasses import dataclass, asdict
+
+   @dataclass
+   class MemBreakdown:
+       """训练显存四大块，单位 bytes。"""
+       params: int
+       grads: int
+       opt_state: int
+       activations: int
+
+       @property
+       def total(self) -> int:
+           return self.params + self.grads + self.opt_state + self.activations
+
+       def shard(self, strategy: str = "ddp", n_gpus: int = 1) -> "MemBreakdown":
+           """按并行策略 ÷ n_gpus，返回每卡的 breakdown。activations 不分。"""
+           p, g, o = self.params, self.grads, self.opt_state
+           if strategy == "fsdp_grad":      # ZeRO-2: 分 grads + opt_state
+               g //= n_gpus; o //= n_gpus
+           elif strategy == "fsdp_full":    # ZeRO-3: 再分 params
+               p //= n_gpus; g //= n_gpus; o //= n_gpus
+           # ddp: 四块都不分
+           return MemBreakdown(p, g, o, self.activations)
+
+       def as_gb(self) -> dict[str, float]:
+           """展示用：各块（含 total）转 GB。"""
+           gb = {k: v / 1024**3 for k, v in asdict(self).items()}
+           gb["total"] = self.total / 1024**3
+           return gb
+
+
+   def mem_calc(
+       n_params: int,
+       n_layer: int,
+       n_embd: int,
+       batch: int,
+       seq_len: int,
+       precision: str = "bf16-mixed",   # "bf16-mixed" | "fp32"
+   ) -> MemBreakdown:
+       """单卡满血四块（未分片）"""
+       ...
+   ```
+   设计要点（职责分离）：
+   - **`mem_calc` 只算单卡满血四块**——config → 四块 bytes，6 参数，不管并行。单一职责。
+   - **分片是 `MemBreakdown.shard()` 方法**——`MemBreakdown → MemBreakdown` 的变换（满血 → 每卡），放数据类上天经地义；MemBreakdown 自己知道哪几块能切。**不要把 strategy/n_gpus 塞进 mem_calc**（那会让它既算又分、职责混，且对比三策略时要重算 base）。
+   - **用法**：`base = mem_calc(...)` 算一次满血 → `base.shard("ddp", 8)` / `base.shard("fsdp_full", 8)` 各分一下，**base 不重算**。A-M3 的对比表（DDP vs FSDP-grad vs FSDP-full）正好是 `base.shard(各策略)`。
+   - **分片规则**（`shard()` 内部）：
+     - `ddp`：四块都不分（每卡完整）
+     - `fsdp_grad`（ZeRO-2）：grads + opt_state ÷ n_gpus；params 不分
+     - `fsdp_full`（ZeRO-3）：params + grads + opt_state ÷ n_gpus
+     - **activations 任何策略都不分**——按各卡 micro-batch 各算各的，不是被切的对象
+   - **6 个参数全必要**：`n_params`（params/grads/opt-state）+ `n_layer/n_embd/batch/seq_len`（activations）+ `precision`（字节数）。不传 `n_head`/`head_dim`——activation 简化公式用 `n_embd` 就够。
+   - **存 bytes（int），不存 GB**——bytes 精确、和 `max_memory_allocated()` 同单位，对照时直接比。`as_gb()` 只在展示时转，且**返回每块 + total 的 dict**（不是只返回 total）——这样打印对比表时每块的 GB 直接取，不用在外面手动 `/GB`。
+   - **optimizer 写死 AdamW**（`8×n_params`）——LLM 标配，想对比 SGD 再加参数。
+   - `total` 是 property（派生，不存）。
+
+   四块各自怎么算（bf16-mixed + AdamW，**分片前的单卡满血值**，再按 strategy ÷ n_gpus）：
    - **Params**（fp32 或 bf16）：`n_params × bytes_per_param`（fp32=4, bf16=2）
      - 注意 mixed precision 下其实 params 有两份：bf16 用于 forward/backward，fp32 master copy 给 optimizer——所以是 `n_params × (2 + 4) = 6 × n_params` 字节
-   - **Grads**：和 params 同精度（mixed precision 下 grad 是 bf16，但 optimizer 用的 master grad 是 fp32 → 也是 `4 × n_params`）
+   - **Grads**：**统一按 fp32 master grad 算 = `4 × n_params`，不随 precision 变**（即使 bf16-mixed，optimizer 更新用的也是 fp32 master grad）。代码里 grads 这一项写死 4 字节、不看 precision——这是有意的，注释说明即可。
    - **Optimizer state (AdamW)**：每个参数两个 fp32 buffer（first moment m + second moment v）→ `8 × n_params`
      - 对比：SGD with momentum = `4 × n_params`；AdaFactor 更省（稀疏化）
-   - **Activations**（最复杂）：transformer 每层 forward 保存的中间结果。粗略估算：
-     - 每层活动 ≈ `s × b × h × (10 + 24/t + 5 × a × s / h)` bytes（Megatron 论文公式简化版，s=seq_len, b=batch, h=n_embd, a=n_head, t=tensor_parallel_size——这里 t=1）
-     - 简化版（fp16 mixed precision、no recompute）：`activation_bytes ≈ 2 × s × b × h × n_layer × constant`，constant 取 ~16-34 看实现
-     - 推荐做法：用 nanoGPT-size 配置（n_layer=12, n_head=12, n_embd=768, seq=1024, batch=8）算个具体值，目标 ~1-3 GB
+   - **Activations**（最复杂）：transformer 每层 forward 要存下来给 backward 用的中间结果。**就用这个简化公式**（参数和上面签名一致，不引入 n_head）：
+     ```
+     activation_bytes ≈ CONST × n_layer × batch × seq_len × n_embd × 2
+     ```
+     - `× 2`：bf16，每个中间值 2 字节
+     - `CONST`：每层要存的中间值个数的经验系数（attention scores / softmax 输出 / FFN 中间 / norm 输入 / residual 等加总）。**这个数没有标准答案**——文献里 ~10 到 ~34 都有，取决于你的实现（dropout mask 存不存、attention 是否 fused、激活中间值留不留）。**所以不要信任何一个固定值**：先随便取个 10–16 算个量级，然后用实测标定——这才是本任务的核心（见 sub-task 5）
+     - **标定法**（A-M3 真正要做的）：实测 `max_memory_allocated()` 减去 params+grads+opt_state（这三块公式是确定的），剩下的就是你这套实现的真实 activation；反推出**你自己的** CONST。这个标定出来的数才可信，公式只是给量级
+     - 为什么不用 Megatron 论文的完整公式（带 `5 × a × s / h`、`24/t` 这些项）：那个需要 n_head 和 tensor_parallel_size，跟本任务砍掉 n_head 的签名冲突，且精度对教学是过度的。简化版自洽且够用
+     - 验算：nanoGPT-size（n_layer=12, n_embd=768, seq=1024, batch=8）代入，`12 × 12 × 8 × 1024 × 768 × 2 ≈ 1.7 GB`——落在合理量级
 
-2. **总显存** = params + grads + opt_state + activations + 杂项（NCCL buffers、cuDNN workspace 等，估 ~1-2 GB）
+2. **总显存** = params + grads + opt_state + activations（就是 `MemBreakdown.total`）。
+   > `mem_calc` 只算这四块可预测的。实测 `max_memory_allocated()` 通常会比这个 total **高一截**——多出来的是 CUDA context（几百 MB）、cuDNN workspace、NCCL buffers、allocator 碎片，这些不随模型大小线性变、没有干净公式，**不要在 mem_calc 里硬塞一个固定 GB 数**。它们会在你标定 activation CONST 时被一起吸收进去（实测 - 四块 = activation + 杂项，统一用 CONST 拟合），所以不单列。
 
-3. **DDP / FSDP 修正**：
-   - DDP：每张卡都有完整 params/grads/opt-state；只 activation 因为 micro-batch 切了
-   - FSDP `SHARD_GRAD_OP` (ZeRO-2)：grads + opt_state 切成 1/N，params 不切
-   - FSDP `FULL_SHARD` (ZeRO-3)：params + grads + opt_state 都切成 1/N
+3. **分片**：见上面 `MemBreakdown.shard(strategy, n_gpus)`——`mem_calc` 算的满血 `base`，调 `base.shard(...)` 得每卡值。三种策略各分一次拼成对比表（task 3 的 `mem_breakdown.md` 就靠这个）。
 
-4. **写 `mem_calc.py` CLI**：`python mem_calc.py --n_params 350M --opt adamw --precision bf16-mixed --batch 8 --seq 1024 --n_layer 24 ... --strategy fsdp_full --n_gpus 8`，打印四块字节数 + 总和
+4. **写 `mem_calc.py` CLI**（参数与 `mem_calc` 签名一致 + 一个 `--strategy/--n_gpus` 给 shard 用）：`python mem_calc.py --n_params 350M --n_layer 24 --n_embd 1024 --batch 8 --seq 1024 --precision bf16-mixed --strategy fsdp_full --n_gpus 8`，内部 `mem_calc(...).shard(strategy, n_gpus)` 拿每卡 `MemBreakdown`，用 `.as_gb()` 打印四块 + total
 
-5. **实测验证**：
-   - 跑你的 mygpt（350M 配置），在 train loop 第 100 step 末尾调用：
+5. **实测验证 / 标定 CONST（可选——可并入 task 2 一起做，不用单独跑一次 GPU）**：
+   - mem_calc 的四块里，params/grads/opt 公式是**确定的**；只有 activation 的 `CONST` 是估的。标定就是用实测反推你这套实现的真实 CONST。
+   - **怎么标定**（如果做）：**用 DDP 或单卡跑**（不要用 FSDP——分片 + all-gather 临时 buffer 会污染实测，反推不干净）。在 train loop 跑稳后：
      ```python
      torch.cuda.reset_peak_memory_stats()
      # 跑 10 step
-     peak = torch.cuda.max_memory_allocated() / 1024**3  # GB
+     peak = torch.cuda.max_memory_allocated()    # bytes，跟 mem_calc 同单位
      ```
-   - 用 `mem_calc` 算一份理论值
-   - 实测 vs 理论：差异 < 10% 算过关；差太多说明你少算了某块（最常见是 activation 公式的 constant 不对）
+   - `实测 peak − (params + grads + opt)[公式确定] = 真实 activation + 杂项` → 反推 CONST。
+   - **但这步可选**：A-M3 的知识点（四块账本 + FSDP 分片递进）你做完 mem_calc.py 就拿到了；CONST 的具体值（16 还是 20）只对你这套实现有效、是细节。**按"不死磕"原则，可跳过单独标定**。
+   - **更省的做法**：task 2 反正要真跑 DDP→FSDP 渐进、记每种 strategy 的实测 peak——那时顺手跟 mem_calc 预测对一下**量级**（不追 <10%，看数量级对不对）即可，不用在这里单独跑。
 
 6. **进阶（选做）**：用 `torch.cuda.memory._record_memory_history(enabled='all')` + `_dump_snapshot('out.pickle')`，上传到 https://pytorch.org/memory_viz 看每一笔 alloc/free 的来源——能看到 activation 的具体大头是哪一层的什么 op
 
 ### 成功标准
-- `mem_calc.py` 给出四块 + 总和（GB），CLI 接 `--n_params --opt --precision --batch --seq --strategy --n_gpus` 等参数
-- 一组实测 vs 理论的对比表，差异 < 10%
-- README 一段话："activation 占了总显存的多少"——会发现 350M 模型的 activation 经常占一半以上，这是 A-M3 选 activation checkpointing 的动机
+- `mem_calc.py` 给出分片后每卡的四块 + total（`mem_calc(...).shard(strategy, n_gpus).as_gb()`），CLI 接 `--n_params --n_layer --n_embd --batch --seq --precision`（mem_calc 参数）+ `--strategy --n_gpus`（shard 参数）
+- 跑出 ddp / fsdp_grad / fsdp_full 三种 strategy 的每卡显存对比表，能看出 ZeRO-2→ZeRO-3 grads/opt 先分、params 后分的递进
+- 能说出："activation 占了总显存多少"——350M 模型 activation 常占一半以上，这是下一步要 activation checkpointing 的动机
+- （可选）实测 vs 理论量级对照——见 sub-task 5，可并入 task 2
 
 ### 失败排查
 - **理论比实测高很多**：你忘了 grad 实际只在 backward 那一刻峰值，optimizer state 实际只在 step 那一刻峰值——peak memory 是这些瞬时峰的最大，不是和
