@@ -2,21 +2,21 @@
 
 > Topic：显存账本（四块字节数）+ ZeRO Stage 1/2/3 各分什么 + FSDP 在 PyTorch 里的实现 + activation checkpointing 的 compute↔memory 取舍。
 >
-> 三个任务：`mem_calc.py` = 自己推显存公式 + 实测验证；`train_fsdp.py` = DDP→FSDP-grad→FSDP-full→FSDP+ckpt 渐进升级；`mem_breakdown.md` = 把每一步的显存收益归因到具体哪一块（params/grads/opt-state/activations）。
+> 两个任务：`mem_calc.py` = 自己推显存账本（四块字节数 + 分片）；`fsdp_train.py` sweep = 真跑 DDP→zero2→zero3→±ckpt，实测 peak 对照预测、把显存收益归因到具体哪一块。
 
 ---
 
-## 任务 1 · `mem_calc.py` 显存账本计算 + 实测验证
+## 任务 1 · `mem_calc.py` 显存账本计算
 
 ### 为什么做这个
-"这个模型能不能塞进这张卡？"是开训前每次都要回答的问题，但很多人只能靠跑一把 OOM 来试。其实训练显存是可以掰开算清楚的——参数、梯度、优化器状态、激活值各占多少字节都有公式。把这四块亲手推一遍、再用实测对照验证误差在 10% 以内，你就拥有了不开机就能估显存的能力，这既是常考的面试题，也是后面选多大模型、要不要省显存技巧的判断依据。算的过程里你还会发现激活值常常占了一半以上，这正好引出下一个任务为什么需要 activation checkpointing。
+"这个模型能不能塞进这张卡？"是开训前每次都要回答的问题，但很多人只能靠跑一把 OOM 来试。其实训练显存能掰开算清楚——参数、梯度、优化器状态、激活值各占多少字节都有公式。把这四块亲手推一遍，你就有了不开机就能估显存、并据此选模型大小/并行策略的能力，这也是常考的面试题。算的过程里你会发现激活值常占大头，这正好引出下一个任务为什么需要 activation checkpointing。
 
 ### 目标
-能徒手算出"训练 N 参数模型 + AdamW + bf16 大概要多少显存"。这是面试常考题，也是 A-M4 选模型大小时的判断依据。
+能徒手算出"训练 N 参数模型 + AdamW + 给定精度 大概要多少显存"，并能把它按并行策略分片到每卡。
 
 ### Sub-tasks
 
-1. **写 `mem_calc(...)`**——返回四块显存（bytes）。签名 + 返回类型：
+1. **写 `mem_calc(...)` + `MemBreakdown`**——返回四块显存（bytes）：
    ```python
    from dataclasses import dataclass, asdict
 
@@ -53,6 +53,7 @@
        n_params: int,
        n_layer: int,
        n_embd: int,
+       n_head: int,
        batch: int,
        seq_len: int,
        precision: str = "bf16-mixed",   # "bf16-mixed" | "fp32"
@@ -60,67 +61,67 @@
        """单卡满血四块（未分片）"""
        ...
    ```
+
    设计要点（职责分离）：
-   - **`mem_calc` 只算单卡满血四块**——config → 四块 bytes，6 参数，不管并行。单一职责。
-   - **分片是 `MemBreakdown.shard()` 方法**——`MemBreakdown → MemBreakdown` 的变换（满血 → 每卡），放数据类上天经地义；MemBreakdown 自己知道哪几块能切。**不要把 strategy/n_gpus 塞进 mem_calc**（那会让它既算又分、职责混，且对比三策略时要重算 base）。
-   - **用法**：`base = mem_calc(...)` 算一次满血 → `base.shard("ddp", 8)` / `base.shard("fsdp_full", 8)` 各分一下，**base 不重算**。A-M3 的对比表（DDP vs FSDP-grad vs FSDP-full）正好是 `base.shard(各策略)`。
-   - **分片规则**（`shard()` 内部）：
-     - `ddp`：四块都不分（每卡完整）
-     - `fsdp_grad`（ZeRO-2）：grads + opt_state ÷ n_gpus；params 不分
-     - `fsdp_full`（ZeRO-3）：params + grads + opt_state ÷ n_gpus
-     - **activations 任何策略都不分**——按各卡 micro-batch 各算各的，不是被切的对象
-   - **6 个参数全必要**：`n_params`（params/grads/opt-state）+ `n_layer/n_embd/batch/seq_len`（activations）+ `precision`（字节数）。不传 `n_head`/`head_dim`——activation 简化公式用 `n_embd` 就够。
-   - **存 bytes（int），不存 GB**——bytes 精确、和 `max_memory_allocated()` 同单位，对照时直接比。`as_gb()` 只在展示时转，且**返回每块 + total 的 dict**（不是只返回 total）——这样打印对比表时每块的 GB 直接取，不用在外面手动 `/GB`。
+   - **`mem_calc` 只算单卡满血四块**——config → 四块 bytes，不管并行。单一职责。
+   - **分片是 `MemBreakdown.shard()` 方法**——`MemBreakdown → MemBreakdown` 的变换（满血 → 每卡），放数据类上：MemBreakdown 自己知道哪几块能切。别把 strategy/n_gpus 塞进 mem_calc（会让它既算又分、职责混，且对比三策略时要重算 base）。
+   - **用法**：`base = mem_calc(...)` 算一次满血 → `base.shard("ddp", G)` / `base.shard("fsdp_full", G)` 各分一下，base 不重算。对比表（DDP vs ZeRO-2 vs ZeRO-3）正好是 `base.shard(各策略)`。
+   - **存 bytes（int），不存 GB**——bytes 精确、和 `torch.cuda.max_memory_allocated()` 同单位，对照时直接比；`as_gb()` 只在展示时转，返回每块 + total 的 dict（这样打印对比表每块的 GB 直接取，不用在外面手动 `/GB`）。
    - **optimizer 写死 AdamW**（`8×n_params`）——LLM 标配，想对比 SGD 再加参数。
    - `total` 是 property（派生，不存）。
+   - **参数为什么是这几个**：`n_params` 定 params/grads/opt-state；`n_layer/n_embd/batch/seq_len/n_head` 定 activations；`precision` 定字节数。`head_dim` 不传（= n_embd/n_head，冗余）。
 
-   四块各自怎么算（bf16-mixed + AdamW，**分片前的单卡满血值**，再按 strategy ÷ n_gpus）：
-   - **Params**（fp32 或 bf16）：`n_params × bytes_per_param`（fp32=4, bf16=2）
-     - 注意 mixed precision 下其实 params 有两份：bf16 用于 forward/backward，fp32 master copy 给 optimizer——所以是 `n_params × (2 + 4) = 6 × n_params` 字节
-   - **Grads**：**统一按 fp32 master grad 算 = `4 × n_params`，不随 precision 变**（即使 bf16-mixed，optimizer 更新用的也是 fp32 master grad）。代码里 grads 这一项写死 4 字节、不看 precision——这是有意的，注释说明即可。
-   - **Optimizer state (AdamW)**：每个参数两个 fp32 buffer（first moment m + second moment v）→ `8 × n_params`
-     - 对比：SGD with momentum = `4 × n_params`；AdaFactor 更省（稀疏化）
-   - **Activations**（最复杂）：transformer 每层 forward 要存下来给 backward 用的中间结果。**就用这个简化公式**（参数和上面签名一致，不引入 n_head）：
-     ```
-     activation_bytes ≈ CONST × n_layer × batch × seq_len × n_embd × 2
-     ```
-     - `× 2`：bf16，每个中间值 2 字节
-     - `CONST`：每层要存的中间值个数的经验系数（attention scores / softmax 输出 / FFN 中间 / norm 输入 / residual 等加总）。**这个数没有标准答案**——文献里 ~10 到 ~34 都有，取决于你的实现（dropout mask 存不存、attention 是否 fused、激活中间值留不留）。**所以不要信任何一个固定值**：先随便取个 10–16 算个量级，然后用实测标定——这才是本任务的核心（见 sub-task 5）
-     - **标定法**（A-M3 真正要做的）：实测 `max_memory_allocated()` 减去 params+grads+opt_state（这三块公式是确定的），剩下的就是你这套实现的真实 activation；反推出**你自己的** CONST。这个标定出来的数才可信，公式只是给量级
-     - 为什么不用 Megatron 论文的完整公式（带 `5 × a × s / h`、`24/t` 这些项）：那个需要 n_head 和 tensor_parallel_size，跟本任务砍掉 n_head 的签名冲突，且精度对教学是过度的。简化版自洽且够用
-     - 验算：nanoGPT-size（n_layer=12, n_embd=768, seq=1024, batch=8）代入，`12 × 12 × 8 × 1024 × 768 × 2 ≈ 1.7 GB`——落在合理量级
+2. **四块各自怎么算**（bf16-mixed + AdamW，**分片前的单卡满血值**）：
 
-2. **总显存** = params + grads + opt_state + activations（就是 `MemBreakdown.total`）。
-   > `mem_calc` 只算这四块可预测的。实测 `max_memory_allocated()` 通常会比这个 total **高一截**——多出来的是 CUDA context（几百 MB）、cuDNN workspace、NCCL buffers、allocator 碎片，这些不随模型大小线性变、没有干净公式，**不要在 mem_calc 里硬塞一个固定 GB 数**。它们会在你标定 activation CONST 时被一起吸收进去（实测 - 四块 = activation + 杂项，统一用 CONST 拟合），所以不单列。
+   > **记号约定**：`6×N` / `4×N` / `8×N` 里 **N = n_params（参数量）**，前面的 **6/4/8 = 每个参数占的字节数**，乘出来单位是 **bytes**。例：350M 参数的 opt_state = `8 bytes/param × 350M = 2.8 GB`。
 
-3. **分片**：见上面 `MemBreakdown.shard(strategy, n_gpus)`——`mem_calc` 算的满血 `base`，调 `base.shard(...)` 得每卡值。三种策略各分一次拼成对比表（task 3 的 `mem_breakdown.md` 就靠这个）。
+   **model state（params + grads + opt_state）——只跟参数量有关**：
 
-4. **写 `mem_calc.py` CLI**（参数与 `mem_calc` 签名一致 + 一个 `--strategy/--n_gpus` 给 shard 用）：`python mem_calc.py --n_params 350M --n_layer 24 --n_embd 1024 --batch 8 --seq 1024 --precision bf16-mixed --strategy fsdp_full --n_gpus 8`，内部 `mem_calc(...).shard(strategy, n_gpus)` 拿每卡 `MemBreakdown`，用 `.as_gb()` 打印四块 + total
+   | 块 | 字节/参数 | = bytes | 为什么 |
+   |---|---|---|---|
+   | **Params** | 6 | `6 × N` | bf16-mixed 有两份：bf16 算用（2B）+ fp32 master copy 给 optimizer（4B）= 6B；纯 fp32 则是 4B |
+   | **Grads** | 4 | `4 × N` | 统一按 fp32 master grad = 4B，**不随 precision 变**（optimizer 更新用 fp32 master grad）。代码里写死 4、不看 precision，注释说明 |
+   | **Opt state** | 8 | `8 × N` | AdamW 每参数两个 fp32 buffer（m + v）= 8B。对比：SGD+momentum = 4B、AdaFactor 更省 |
 
-5. **实测验证 / 标定 CONST（可选——可并入 task 2 一起做，不用单独跑一次 GPU）**：
-   - mem_calc 的四块里，params/grads/opt 公式是**确定的**；只有 activation 的 `CONST` 是估的。标定就是用实测反推你这套实现的真实 CONST。
-   - **怎么标定**（如果做）：**用 DDP 或单卡跑**（不要用 FSDP——分片 + all-gather 临时 buffer 会污染实测，反推不干净）。在 train loop 跑稳后：
+   → 三块合计 **model state = 18 × N bytes**（bf16-mixed + AdamW）。1B 参数就是 18 GB，单卡装不下——这是 ZeRO 的动机。
+
+   **activations——跟 batch/seq 有关（不只跟参数量），必须分两项**：
+   ```
+   activation_bytes ≈ byte × n_layer × [ C1 × batch × seq_len × n_embd       # 线性项：FFN/norm/residual 等
+                                       + C2 × batch × n_head × seq_len² ]      # O(T²) 项：attention 分数矩阵 [B,nh,T,T]
+   ```
+   - `byte`：fp32=4，bf16=2
+   - **为什么必须带 O(T²) 项**：朴素 attention 的 `q @ kᵀ` 会 materialize 整个 `[B, n_head, T, T]` 矩阵。线性项 ∝ seq_len，T² 项 ∝ seq_len²——**当 seq_len 大时（如 1024+），T² 项是 activation 的大头**，漏掉它会把 activation 严重低估。这也是为什么 activation 公式（和 mem_calc 签名）需要 `n_head`。
+   - **activation 跟 model state 的区别**（关键概念）：model state 只由参数量定（固定模型就是常数）；activation 还随 **batch / seq_len** 变——同一个模型 batch 翻倍 activation 就翻倍。所以"模型多大"和"一次 forward 要多少 activation"是两回事。
+   - `C1` / `C2`：经验系数，没有标准值（取决于 dropout mask 存不存、attention 是否 fused）。**FlashAttention 不 materialize T² 矩阵 → C2≈0**（FlashAttention 是 B 课程内容，这里知道它能砍掉 T² 项即可）。朴素实现 C2 显著。先取量级（C1~10、C2~2），再用实测标定（见 sub-task 4）。
+
+3. **分片**：调 `base.shard(strategy, n_gpus)` 得每卡值。三种策略各分一次拼成对比表：
+   - `ddp`：四块都不分（每卡完整 model state + activation）
+   - `fsdp_grad`（ZeRO-2）：grads + opt_state ÷ n_gpus，params 不分
+   - `fsdp_full`（ZeRO-3）：params + grads + opt_state ÷ n_gpus
+   - **activations 任何策略都不分**——它按各卡的 micro-batch 各算各的，不是被切的对象
+
+4. **CLI**：`python mem_calc.py --n-params 350000000 --n-layer 24 --n-embd 1024 --n-head 16 --batch 8 --seq-len 1024 --precision bf16-mixed --strategy fsdp_full --n-gpus 8`，内部 `mem_calc(...).shard(strategy, n_gpus)` 拿每卡 `MemBreakdown`，`.as_gb()` 打印四块 + total。
+
+5. **（可选）用实测标定 activation 系数**：mem_calc 里 model state 三块公式是确定的；只有 activation 的 C1/C2 是估的。标定 = 用实测反推真实系数。
+   - **方法**：用 DDP 或单卡跑（别用 FSDP——分片 + all-gather 临时 buffer 会污染实测）。train loop 跑稳后：
      ```python
-     torch.cuda.reset_peak_memory_stats()
-     # 跑 10 step
-     peak = torch.cuda.max_memory_allocated()    # bytes，跟 mem_calc 同单位
+     torch.cuda.reset_peak_memory_stats(device)   # 训练循环开始前清零，只测稳态峰值
+     # 跑若干 step
+     peak = torch.cuda.max_memory_allocated(device)   # bytes，跟 mem_calc 同单位
      ```
-   - `实测 peak − (params + grads + opt)[公式确定] = 真实 activation + 杂项` → 反推 CONST。
-   - **但这步可选**：A-M3 的知识点（四块账本 + FSDP 分片递进）你做完 mem_calc.py 就拿到了；CONST 的具体值（16 还是 20）只对你这套实现有效、是细节。**按"不死磕"原则，可跳过单独标定**。
-   - **更省的做法**：task 2 反正要真跑 DDP→FSDP 渐进、记每种 strategy 的实测 peak——那时顺手跟 mem_calc 预测对一下**量级**（不追 <10%，看数量级对不对）即可，不用在这里单独跑。
-
-6. **进阶（选做）**：用 `torch.cuda.memory._record_memory_history(enabled='all')` + `_dump_snapshot('out.pickle')`，上传到 https://pytorch.org/memory_viz 看每一笔 alloc/free 的来源——能看到 activation 的具体大头是哪一层的什么 op
+   - `实测 peak − model state（公式确定） = 真实 activation + 杂项` → 反推 C1/C2。
+   - **可跳过**：知识点（四块账本 + 分片）做完 mem_calc 就拿到了，系数具体值只对你这套实现有效。按"不死磕"原则，量级对就行，标定可并入任务 2（任务 2 反正要实测各 strategy 的 peak）。
 
 ### 成功标准
-- `mem_calc.py` 给出分片后每卡的四块 + total（`mem_calc(...).shard(strategy, n_gpus).as_gb()`），CLI 接 `--n_params --n_layer --n_embd --batch --seq --precision`（mem_calc 参数）+ `--strategy --n_gpus`（shard 参数）
-- 跑出 ddp / fsdp_grad / fsdp_full 三种 strategy 的每卡显存对比表，能看出 ZeRO-2→ZeRO-3 grads/opt 先分、params 后分的递进
-- 能说出："activation 占了总显存多少"——350M 模型 activation 常占一半以上，这是下一步要 activation checkpointing 的动机
-- （可选）实测 vs 理论量级对照——见 sub-task 5，可并入 task 2
+- `mem_calc(...).shard(strategy, n_gpus).as_gb()` 能给出 ddp / fsdp_grad / fsdp_full 三种策略的每卡四块 + total
+- 看得出 ZeRO-2→ZeRO-3 的递进：先分 grads/opt，再分 params
+- 能说清：model state（∝参数量）vs activation（∝batch·seq，含 O(T²) 项）的区别，以及为什么 activation 常占大头
 
 ### 失败排查
-- **理论比实测高很多**：你忘了 grad 实际只在 backward 那一刻峰值，optimizer state 实际只在 step 那一刻峰值——peak memory 是这些瞬时峰的最大，不是和
-- **理论比实测低很多**：activation 公式 constant 取小了；或者你忘记 dropout / residual / layernorm 各自都要存中间值
-- **跑出来 OOM 但 mem_calc 说应该够**：cuDNN workspace / NCCL buffer 没算（再加 1-2 GB 经验值）；或者用了 `torch.compile` 编译时内存峰值更高
+- **预测比实测高很多**：grad 的峰值只在 backward 那一刻、opt state 只在 step 那一刻——peak 是这些瞬时峰的最大值，不是简单相加
+- **预测比实测低很多**：多半是 activation 漏了 O(T²) 项（只算了线性项），或 C1/C2 取小了
+- **OOM 但预测说够**：CUDA context / cuDNN workspace / NCCL buffer / allocator 碎片没算进去——这些不随模型大小线性变、没有干净公式，不要硬塞固定 GB；实测时它们会体现在"实测比预测高的那一截"里
 
 ### 辅助阅读（非 canonical）
 - HuggingFace "Model anatomy"（详细推 activation 公式）：https://huggingface.co/docs/transformers/model_memory_anatomy
@@ -128,116 +129,98 @@
 - PyTorch memory viz：https://pytorch.org/memory_viz
 
 ### Deliverable
-- `course-a/m3-fsdp/mem_calc.py` + `course-a/m3-fsdp/mem_calc_validation.md`（理论 vs 实测表格 + 一段解释）
+- `mem_calc.py`（`MemBreakdown` + `mem_calc` + CLI）
 
 ---
 
 ## 任务 2 · DDP → FSDP 渐进升级 + activation checkpointing
 
 ### 为什么做这个
-DDP 的问题是每张卡都存一整份参数、梯度、优化器状态，模型一大就单卡 OOM。FSDP（也就是 ZeRO）的思路是把这些东西切片分到各张卡上，谁用到再临时聚回来——这是今天训练超大模型的主流做法。这里不是直接上最激进的配置，而是从 DDP 一步步升到"切梯度"、"切参数"、再叠加 activation checkpointing，每升一级都实测显存和吞吐怎么变。这样你不只是会调 API，而是能把每一步省下的显存对应到上个任务算的具体哪一块，真正理解 ZeRO 各个 stage 到底在切什么、代价是什么。
+DDP 每张卡都存一整份参数、梯度、优化器状态，模型一大就单卡 OOM。FSDP（即 ZeRO）把这些切片分到各卡、谁用到再临时聚回来——这是今天训练大模型的主流做法。这里不直接上最激进的配置，而是从 DDP 一步步升到"切梯度"、"切参数"、再叠加 activation checkpointing，每升一级实测显存和吞吐。这样你能把每一步省下的显存对应到任务 1 算的具体哪一块，真正理解 ZeRO 各 stage 切什么、代价是什么。
 
 ### 目标
-把 mygpt 升到 350M（或 1B 看资源），实测 4 种配置的 (peak memory, tokens/sec/GPU)：
-1. DDP（baseline）
-2. FSDP `SHARD_GRAD_OP`（ZeRO-2）
-3. FSDP `FULL_SHARD`（ZeRO-3）
-4. FSDP `FULL_SHARD` + activation checkpointing
+把模型升到 ~350M，实测 6 种配置 `{ddp, zero2, zero3} × {±activation_ckpt}` 的 (peak memory, tokens/sec/GPU)，归因到四块。
 
 ### Sub-tasks
 
-1. **模型升级到 350M**：mygpt config 改 `n_layer=24, n_head=16, n_embd=1024, block_size=1024`（≈ 350M）；如果资源够 1B 就 `n_layer=24, n_head=16, n_embd=2048`
+1. **模型升到 ~350M**：config 改 `n_layer=24, n_head=16, n_embd=1024, block_size=1024`（≈350M）。A-M3 用 350M 足够展示 ZeRO + activation ckpt；更大模型（1B+）留 A-M4。
 
-2. **配置 1 — DDP baseline**：跑 A-M2 的 train_ddp.py 在 350M 上。**这一步可能 OOM**——OOM 就把 micro-batch 调到能跑（4 / 2 / 1），记录最大可行 micro-batch 和对应 peak memory
+   > **⚠️ batch_size 必须按显存选，否则各档全 OOM、看不到递减**。朴素 attention（`q@kᵀ` 显式 materialize T×T 矩阵）在 seq=1024 时 activation 极吃显存，**activation 才是瓶颈、不是 model state**。各档每卡显存随 batch 增长，而 activation 这块 ZeRO 切不动——所以 batch 越大，越多档位 OOM。
+   >
+   > **选 batch 的原则**：让显存最高的 DDP 档也能跑通，这样四档都出数、显存阶梯（DDP > ZeRO-2 > ZeRO-3 > +ckpt）才完整可见。
+   > - **单卡 32GB 级（如 V100）**：batch 取小（如 2~4），否则 DDP/ZeRO 档会 OOM、只剩 +ckpt 能跑、对比就废了
+   > - **单卡 40/80GB 级（如 A100）**：能用更大 batch
+   >
+   > 先用 mem_calc 预测各档每卡显存、挑一个让 DDP 也 ≤ 显存×0.8 的 batch，再跑。
 
-3. **配置 2 — FSDP SHARD_GRAD_OP**（ZeRO-2，不切 params）：
+2. **配置 — DDP baseline**：跑 A-M2 的 train_ddp.py。记 peak memory。DDP 是显存最高的档，它跑通的 batch 后面几档一定也跑得通。
+
+   > **dtype 跟硬件走**：`AMP_DTYPE = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16`。**A100/H100 才有 bf16 tensor core；V100/T4 一类要用 fp16**。所有 `param_dtype` 用这个变量，别写死 bf16。
+
+3. **配置 — ZeRO-2（SHARD_GRAD_OP，不切 params）**，FSDP2 写法：
    ```python
    from torch.distributed._composable.fsdp import fully_shard, MixedPrecisionPolicy
-   from torch.distributed.fsdp import ShardingStrategy
-   # FSDP2 推荐写法：
-   for layer in model.transformer.h:
-       fully_shard(layer, mp_policy=MixedPrecisionPolicy(param_dtype=torch.bfloat16))
+   for layer in model.blocks:                       # model.blocks = 你的 transformer 层列表
+       fully_shard(layer, mp_policy=MixedPrecisionPolicy(param_dtype=AMP_DTYPE))
    fully_shard(model)
    ```
-   或 FSDP1（材料里更多）：
+   或 FSDP1（老 API，材料里更多）：
    ```python
-   from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, ShardingStrategy
+   import functools
+   from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, ShardingStrategy, MixedPrecision
    from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
    model = FSDP(
        model,
        sharding_strategy=ShardingStrategy.SHARD_GRAD_OP,
        auto_wrap_policy=functools.partial(transformer_auto_wrap_policy, transformer_layer_cls={Block}),
-       mixed_precision=MixedPrecision(param_dtype=torch.bfloat16, reduce_dtype=torch.bfloat16, buffer_dtype=torch.bfloat16),
+       mixed_precision=MixedPrecision(param_dtype=AMP_DTYPE, reduce_dtype=AMP_DTYPE, buffer_dtype=AMP_DTYPE),
    )
    ```
-   **重要**：`auto_wrap_policy=transformer_auto_wrap_policy` 必须用，否则整个模型当一个 shard 单元，通信粒度极差
+   **关键**：按「一个 transformer block」为粒度 wrap（`transformer_layer_cls` 填你自己的 block 类）。否则整个模型当一个 shard 单元，通信粒度极差。
 
-4. **配置 3 — FSDP FULL_SHARD**（ZeRO-3）：把 sharding_strategy 改成 `FULL_SHARD`
+4. **配置 — ZeRO-3（FULL_SHARD）**：sharding_strategy 改 `FULL_SHARD`（FSDP2 里是 `reshard_after_forward=True`）。
 
-5. **配置 4 — FSDP FULL_SHARD + activation checkpointing**：
+5. **配置 — + activation checkpointing**（可叠加在任意 ZeRO stage 上）：
    ```python
-   from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import apply_activation_checkpointing, CheckpointWrapper
-   apply_activation_checkpointing(model, check_fn=lambda m: isinstance(m, Block))
+   from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
+       checkpoint_wrapper, apply_activation_checkpointing,
+   )
+   apply_activation_checkpointing(
+       model,
+       checkpoint_wrapper_fn=lambda m: checkpoint_wrapper(m, preserve_rng_state=False),
+       check_fn=lambda m: isinstance(m, Block),     # Block = 你的 transformer block 类
+   )
    ```
-   这会让每个 transformer block 在 backward 时重算 forward（用 compute 换 memory）
+   每个 transformer block 在 backward 时重算 forward（用 compute 换 activation memory）。
 
-6. **每个配置跑 ≥ 200 step**，记 (peak memory GB, tokens/sec/GPU, val loss after N step)
+6. **每个配置跑若干 step**，记 (peak memory GB, tokens/sec/GPU)。
 
 ### 成功标准
-- 4 组数字给全的表格
-- 显存递减：DDP > FSDP-grad > FSDP-full > FSDP-full+ckpt
-- 4 跟 3 对比：peak memory 应该降 30-50%，throughput 降 20-30%（activation 重算的代价）
-- 解释："为什么 FSDP-grad 比 DDP 显存少了 X GB"——对应 mem_calc 里的 grads + opt_state 切了 1/N
+- **6 配置 `{ddp, zero2, zero3} × {±ckpt}` 对比表**：每行 = 预测四块（`mem_calc(...).shard()`）+ 实测 peak_mem + throughput
+- 显存递减可见：DDP > ZeRO-2 > ZeRO-3，且每个 +ckpt 严格更低
+- **归因到具体块**（核心）：
+  - "切参数降显存最狠"——ZeRO-3 把 params 也分掉，对应 mem_calc 的 `6N → 6N/G`；而 ZeRO-2→ZeRO-3 降幅小，因为 grads+opt（18 里的 12）ZeRO-2 已切，只剩 params 6 没切
+  - "activation 不会因为 ZeRO 自动降低，必须靠 checkpointing"——+ckpt 在三种 stage 下砍掉的显存量级**相同**，因为 ZeRO 切 model state、ckpt 砍 activation，两个操作作用在不同显存块、互不干扰（正交）
+  - ckpt 代价：throughput 降（backward 多一次 forward 重算）
+- 实测 vs 预测：方向一致即可；绝对值偏差能解释（activation 的 O(T²) 项、初始化/碎片残留）
 
 ### 失败排查
-- **FSDP 启动报 `auto_wrap_policy` 错**：FSDP1 和 FSDP2 API 不同；FSDP1 要传 `transformer_layer_cls={YourBlockClass}` 集合；FSDP2 要逐层 `fully_shard()`。混用会出奇怪错误
-- **FSDP 比 DDP 慢得过分**：未配 `auto_wrap_policy` → 退化成全模型一个 shard、通信巨慢
-- **activation checkpointing 显存没怎么降**：check_fn 写错了（没匹配到任何 block）；或者你用了 `reentrant=True`（PyTorch 默认，但 FSDP 推荐 `use_reentrant=False`）
+- **FSDP 报 `auto_wrap_policy` 错**：FSDP1/FSDP2 API 不同——FSDP1 传 `transformer_layer_cls={你的Block类}`，FSDP2 逐层 `fully_shard()`，别混用
+- **FSDP 比 DDP 慢得过分**：没按 transformer block 粒度 wrap → 退化成全模型一个 shard、通信巨慢
+- **activation checkpointing 显存没降**：check_fn 没匹配到任何 block；或用了 `use_reentrant=True`（推荐 `False`）
+- **各档全 OOM**：batch 太大——见 sub-task 1，activation 是瓶颈，单卡 32GB 级要用小 batch
 
 ### 辅助阅读（非 canonical）
 - PyTorch FSDP2 docs（新 API）：https://pytorch.org/docs/stable/distributed.fsdp.fully_shard.html
 - `apply_activation_checkpointing` 用法：https://pytorch.org/docs/stable/checkpoint.html
-- "How to choose between FSDP1 and FSDP2"：搜博客即可
 
 ### Deliverable
-- `course-a/m3-fsdp/train_fsdp.py`（接 `--strategy {ddp, fsdp_grad, fsdp_full, fsdp_full_ckpt}` flag 切换）
-- `course-a/m3-fsdp/strategy_comparison.md`：4 组数字表 + 一段对每相邻两步的差异解释
+- `fsdp_train.py`（`--strategy {ddp, zero2, zero3}` + `--activation_ckpt`）+ sweep 脚本
+- `fsdp_sweep_results.md`：6 配置的（预测四块 + 实测 peak + throughput）表 + 归因分析
 
 ---
 
-## 任务 3 · 显存收益归因表
-
-### 为什么做这个
-任务 2 你看到了"FSDP-full 比 DDP 省了一大截显存"，但如果只停在"省了 X GB"这个结论上，面试时被追问"具体省在哪"就会卡壳。这个任务逼你把每个配置的四块显存（参数/梯度/优化器状态/激活值）逐项列成表，让"为什么这一步降幅最大"变成一眼能看懂的账本。做完你会清楚地看到：切参数是降显存最狠的一步，而激活值不会因为切片自动变小、必须靠 checkpointing——这种把现象拆到具体成因的能力，正是区分"会用工具"和"真懂原理"的地方。
-
-### 目标
-用任务 1 的 `mem_calc` + 任务 2 的实测，把 4 个配置每一块（params / grads / opt-state / activations）的字节数列出来，让"为什么 FSDP-full 比 DDP 省 X GB"变成可读的表。
-
-### Sub-tasks
-1. 对 4 个配置（DDP / FSDP-grad / FSDP-full / FSDP-full+ckpt），各自填表：
-
-   | 配置 | params | grads | opt_state | activations | 总 |
-   |---|---|---|---|---|---|
-   | DDP | 6×N | 4×N | 8×N | A | 18N + A |
-   | FSDP-grad | 6×N | 4×N/G | 8×N/G | A | 6N + 12N/G + A |
-   | FSDP-full | 6×N/G | 4×N/G | 8×N/G | A | 18N/G + A |
-   | FSDP-full+ckpt | 6×N/G | 4×N/G | 8×N/G | A/k | 18N/G + A/k |
-
-   N = n_params, G = n_gpus, A = activation_bytes, k = checkpoint 折扣（一般 4-8）
-2. 用 350M / 8 GPU / bf16 mixed 算具体数字，与任务 2 的实测对照
-3. README 一段话：解释为什么 FSDP-full 把"params 分掉"是显存降幅最大的一步
-
-### 成功标准
-- 表格四行四列填全
-- 理论值 vs 实测差异 < 15%
-- 一段解释提到："activation 不会因为 FSDP 自动降低，必须靠 checkpointing"
-
-### Deliverable
-- `course-a/m3-fsdp/mem_breakdown.md`（这个表 + 解释）
-
----
-
-## 三个任务做完之后
+## 两个任务做完之后
 
 - 跑 QUIZ.md
-- A-M3 过关 → 开 A-M4（在 AWS 多 GPU 上把模型扩到 1B）
+- A-M3 过关 → 开 A-M4（在 AWS 多 GPU 上把模型扩到更大规模）

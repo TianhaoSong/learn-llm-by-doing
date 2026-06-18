@@ -14,23 +14,6 @@
 
 > 判据：问自己「不动手写，光读懂能不能在 QUIZ 答清楚 + 面试讲明白？」能 → 读懂就行；不能（机制藏在代码里 / 数字要实测）→ 动手。
 
-## 💰 全项目 AWS 成本预算（纯 spot 自费）
-
-| 模块 | 实例 | 估算 | 省钱关键 |
-|---|---|---|---|
-| A-M0 / A-M1 | g4dn.xlarge / g5.xlarge（单卡） | ~$7 | 单卡，跑完即关 |
-| A-M2 | g4dn.12xlarge / p3.8xlarge（4卡） | ~$15 | T4/V100 够，不用 A100 |
-| A-M3 | g5.12xlarge / p4d（4–8卡） | ~$20 | 与 A-M4 连做省冷启动 |
-| **A-M4** | p4d（8× A100）**跑 350M 不跑 1B** | ~$40 | 最大杠杆：350M 而非 1B（省 ~$110） |
-| B-M0~M2 | g5.xlarge（单卡 + GPT-2） | ~$10 | 调度逻辑不吃大卡 |
-| B-M3 + B-M4 | p4d（8卡）**连做** | ~$60 | 一次开机做完两个 7B 推理模块 |
-| C 课程 | t3.medium + API token | ~$50 | 成本全在 API，机器几乎免费 |
-| **合计** | | **~$200** | |
-
-**三条铁律**：① 代码先在单卡/小实例调通，多卡只在跑 benchmark 时开、**跑完立刻 terminate**；② spot 必配 checkpoint（被回收不丢进度）+ auto-shutdown（忘关一晚 p4d ≈ $200）；③ **成本大头（A-M3/A-M4/B-M3/B-M4）优先用 AWS GPU（spot 或已有 quota）**，自费可压到 < $80。
-
----
-
 ## 课程 A — 手写训练（线 1）
 
 **Course outcome（学完后能讲清楚）**：从 nanoGPT 单卡跑通到 100M–1B 多卡训练，能脱口讲清 DDP/FSDP/ZeRO 的取舍、NCCL 通信模式、显存账本、gradient accumulation 与 micro-batch 的 trade-off，并有自己的 profiling 数据。
@@ -48,7 +31,6 @@
    - 数据：MNIST 由 `torchvision.datasets.MNIST(root='./data', download=True)` 自动下载
    - 仓库布局：`mkdir -p course-a/m0-pytorch && cd $_`
    - 启动：`python train_mlp.py`（单卡，无需 torchrun）
-   - 💰 **成本纪律**：跑完 benchmark/实验立刻 `terminate`，别挂机；单卡模块 < $2
 
    **值得理解**（看材料、问自己）：
    - DLAMI 把 CUDA driver / PyTorch / cuDNN 版本一致性问题搞定了——后续所有线 1/2 模块复用同一个 AMI，省掉 90% env 折腾
@@ -134,20 +116,20 @@
 
 0. **环境准备**
 
-   **快速 setup**：
-   - 实例（按省优先）：`g4dn.12xlarge` spot（4× T4，PCIe，最便宜的 4 卡）跑 DDP 概念 + scaling 曲线完全够；想看 **NVLink overlap** 选 `p3.8xlarge` spot（4× V100 NVLink，常比 g5 还便宜）——baby GPT 不需要 A100，**p4d 留给 A-M3**
+   **快速 setup**（A-M2 要 **PCIe vs NVLink 两档对照**，所以用两种实例）：
+   - **NVLink 档**：`ml.p3dn.24xlarge`（8× V100 32GB, NVLink）——测 NVLink 下的 all-reduce 带宽 + scaling
+   - **PCIe 档**：`g5.12xlarge`（4× A10G 24GB, PCIe）——测 PCIe 下的对照，看 NVLink 比 PCIe 快多少（核心数据点）
    - AMI：同 A-M0
    - 装包：无新增（DLAMI 自带 NCCL + torch.distributed）
    - 数据：复用 A-M1 的 TinyShakespeare 即可（不用 OpenWebText，太快收敛看不出 scaling 问题；DDP 重点是 throughput 和 scaling，不是模型质量）
    - 仓库布局：`mkdir -p course-a/m2-ddp`，复用 A-M1 的 mygpt 包
-   - 启动：`torchrun --standalone --nproc_per_node=4 train_ddp.py`
-   - 💰 **成本纪律**：代码先在单卡/本地调通，**多卡只在跑 benchmark 时开、跑完立刻 terminate**；A-M2 整个 < $15
+   - 启动：`torchrun --standalone --nproc_per_node=<卡数> train_ddp.py`
 
    **值得理解**：
    - **`torchrun --nproc_per_node=N` 实际 fork 出 N 个 Python 进程**，每进程占一张 GPU；`RANK` / `LOCAL_RANK` / `WORLD_SIZE` 通过环境变量传入。这是面试题。
    - **`init_process_group(backend="nccl")` 在每个进程里调一次**；它不是创建进程，只是让已 fork 出的进程互相 rendezvous
    - **NCCL 调试三神器**：`NCCL_DEBUG=INFO`（看 transport：NVLink / PCIe / IB）、`NCCL_DEBUG_SUBSYS=ALL`、`TORCH_DISTRIBUTED_DEBUG=DETAIL`。卡 hang 时先打开这些
-   - **g5 是 PCIe 互联（无 NVLink）**——你跑出来的 DDP scaling 比 p4d 差是预期，bench 里要标注硬件
+   - **g5 是 PCIe 互联（无 NVLink），p3dn 是 NVLink**——g5 上 DDP scaling 比 p3dn 差是预期（这正是两档对照要看的），bench 里必须标注硬件
    - **profiler 抓 trace** 用 `torch.profiler.profile(activities=[CPU, CUDA], on_trace_ready=tensorboard_trace_handler('./log'))`，输出文件用 `chrome://tracing/` 或 `tensorboard --logdir=./log` 看 timeline
    - **bf16 vs fp16**：A100/H100 都原生支持 bf16，几乎默认选 bf16（无需 GradScaler）；fp16 主要是 V100/T4 这类老卡
 
@@ -187,13 +169,12 @@
 0. **环境准备**
 
    **快速 setup**：
-   - 实例（按省优先）：`g5.12xlarge` spot（4× A10G 24GB）或 `p3.8xlarge`（4× V100 16GB）就够演示 DDP→FSDP 渐进——**V100 16GB 上 350M 的 DDP baseline 会 OOM，这恰好是"DDP 跑不动、FSDP 跑得动"的教学场景**。`p4d.24xlarge`（8× A100）仅在你想 **A-M3 + A-M4 连做**（同一台跑完显存对比直接进 1B 训练）时才开，省一次冷启动
+   - 实例：`ml.p3dn.24xlarge`（8× V100 32GB, NVLink）。A-M3 看的是显存账本 + ZeRO 分片，跟互联类型无关，单一多卡实例即可（不像 A-M2 需要 PCIe vs NVLink 对照）。
    - AMI：同 A-M0
    - 装包：无新增；FSDP 是 PyTorch 原生
-   - 数据：用 OpenWebText 子集 `load_dataset("Skylion007/openwebtext", split="train[:1%]")` 或 FineWeb-Edu 子集——350M 模型需要更多 token 数据才看得出显存差异
+   - 数据：复用 A-M1/A-M2 的 TinyShakespeare——A-M3 看的是不同 strategy 的**显存差异**，跟数据质量无关，把 350M 模型跑起来占住显存就行；真实大数据留到 A-M4
    - 仓库布局：`mkdir -p course-a/m3-fsdp`
-   - 启动：`torchrun --standalone --nproc_per_node=4 train_fsdp.py --shard_strategy=FULL_SHARD`
-   - 💰 **成本纪律**：代码单卡调通 → 多卡只跑显存/throughput 对比 → 跑完 terminate；4 卡几小时 < $20。**优先用 AWS GPU（spot 或已有 quota）**（免费，requirements.md 写了你有）
+   - 启动：`torchrun --nproc_per_node=8 fsdp_train.py --strategy zero3`（V100 无 bf16 → 本轮 fp32 或 fp16）
 
    **值得理解**：
    - **PyTorch 2.x 有两套 FSDP API**：`torch.distributed.fsdp.FullyShardedDataParallel`（FSDP1，老）vs `torch.distributed._composable.fsdp.fully_shard`（FSDP2，新）。**新项目用 FSDP2**——API 更简洁、和 TP 组合更顺；但材料里还是 FSDP1 多，读的时候注意分辨
@@ -237,8 +218,6 @@
 
    **快速 setup**：
    - **默认跑 350M，不跑 1B**（最大省钱杠杆）：350M + FSDP 在 `p4d.24xlarge`（8× A100 40GB）就够，~$40 跑完；1B 要 `p4de`（80GB）+ 翻倍时长 ~$150。**学习目标（多卡 FSDP + checkpoint resume + bottleneck 分析）350M 和 1B 完全一样**，按 requirements.md「模型质量不是目标」，350M 足够。想跑 1B 再升 p4de
-   - 💰 **资源来源优先级**：① AWS GPU（spot 或已有 quota）→ ② AWS spot p4d。**A-M3 用 p4d 的话，A-M3+A-M4 连着做、同一台机器跑完**，省冷启动 + onboarding
-   - 💰 **spot 纪律**：sharded checkpoint（本任务核心）+ 脚本末尾 auto `shutdown` / 设 `--max-runtime`；**忘关一晚 p4d ≈ $200 没了**，这是最常见烧钱方式
    - AMI：同 A-M0
    - 数据：FineWeb-Edu 推荐——更新、质量比 OpenWebText 高
      ```
@@ -431,7 +410,6 @@
      ```
    - 仓库布局：`mkdir -p course-b/m3-tp/engine_v3`
    - 启动：`torchrun --standalone --nproc_per_node=8 -m engine_v3.engine`（单机 TP=8）
-   - 💰 **成本纪律**：TP 代码逻辑先在小模型/少卡验证对 → 真跑 7B benchmark 时才开 8 卡 → 跑完 terminate。**B-M3 + B-M4 连着做**（同一台 p4d、都是 7B 推理，一次开机做完两个模块）；两个模块合计 < $60
 
    **值得理解**：
    - **PyTorch Tensor Parallel API**（`torch.distributed.tensor.parallel`）：`ColwiseParallel` / `RowwiseParallel` 是新一代 API，比手写 all-reduce 简洁；但**手写一遍**对理解最有帮助——这是面试题
@@ -481,7 +459,6 @@
    - 数据：ShareGPT 子集 https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered（注意：这是真实对话数据，仅供 benchmark）
    - 仓库布局：`mkdir -p course-b/m4-compare`
    - 启动：分别启 self-engine / vLLM serve / SGLang serve，三个进程各占一段时间窗口跑同一组 prompt
-   - 💰 **成本纪律**：三方 benchmark 一气跑完（self / vLLM / SGLang 错峰但同一开机窗口）→ 跑完 terminate；与 B-M3 合计 < $60
 
    **值得理解**：
    - **vLLM 启动**：`python -m vllm.entrypoints.openai.api_server --model meta-llama/Llama-2-7b-hf --tensor-parallel-size 8`，暴露 OpenAI 兼容 API
@@ -654,7 +631,6 @@
    - 实例：`t3.medium`（CPU；SWE-bench 跑 docker 测试需要 `t3.large`/`t3.xlarge` 内存大点）
    - 装包：`pip install anthropic swebench`（如选 SWE-bench Lite）
    - 数据：SWE-bench Lite 子集 https://huggingface.co/datasets/princeton-nlp/SWE-bench_Lite（300 个 task；选 30–50 个跑 demo）
-   - 💰 **主要成本是 API token 不是机器**：~$50/轮（Claude Sonnet × 30 task × ~3 万 tokens）。这是 C 课程唯一显著花钱处
    - 仓库布局：单独的 public repo `multi-agent-vs-single`（这是简历版，公开发）
    - 启动：`python single_agent_baseline.py --task swebench-lite-30`，`python multi_agent.py --task swebench-lite-30`
 
