@@ -90,15 +90,16 @@
    - 解释 BPE/byte-level tokenizer 的工作流程（不要求自己训 tokenizer）
    - 知道 KV cache 在推理时长什么样（为线 2 埋伏笔）
 
-2. **学习材料（canonical）**
-   - 【先看这个 · 本课自制】GPT 形状地图（文本→tokenize→(B,T)→…→logits→采样→文本，端到端跟着 tensor.shape 走，每行锚定 mygpt/model.py 代码 + attention 真实数字）: gpt-shapes-primer.html
-   - "Attention Is All You Need": https://arxiv.org/abs/1706.03762
-   - Karpathy "Let's build GPT: from scratch, in code, spelled out": https://www.youtube.com/watch?v=kCc8FmEb1nY
-   - nanoGPT repo: https://github.com/karpathy/nanoGPT
-   - The Illustrated Transformer: https://jalammar.github.io/illustrated-transformer/
-   - RoFormer (RoPE) paper: https://arxiv.org/abs/2104.09864
+2. **学习材料（canonical）** — 按顺序：
+   - Karpathy "Let's build GPT, from scratch"（跟着写 GPT）: https://www.youtube.com/watch?v=kCc8FmEb1nY
+   - 3Blue1Brown "Attention in transformers, step-by-step"（attention 直觉，可视化）: https://www.youtube.com/watch?v=eMlx5fFNoYc
+   - The Illustrated Transformer（attention 图解，原版 encoder-decoder）: https://jalammar.github.io/illustrated-transformer/
+   - GPT 形状地图（本课自制，写代码时对照 shape）: gpt-shapes-primer.html
+   - nanoGPT（卡住时对照、不要抄）: https://github.com/karpathy/nanoGPT
+   - "Attention Is All You Need"（经典出处、非必读）: https://arxiv.org/abs/1706.03762
 
    > 任务相关辅助阅读（tiktoken 用法、`torch.compile` 注意点等）放 DOING.md。
+   > GPT-2 用学习式绝对位置编码；RoPE/ALiBi 知道概念差异即可，不必读原论文。
 
 3. **Doing 任务** → 见 [`course-a/m1-mygpt/DOING.md`](course-a/m1-mygpt/DOING.md)
    - 三个任务：`mygpt/model.py + train.py` / `tests/test_attention.py` / `torch.compile` step time 实验
@@ -140,15 +141,14 @@
    - gradient accumulation 与 micro-batch 的关系，DDP 下如何正确累积（`no_sync` 用法）
    - mixed precision（fp16/bf16）和 GradScaler 的工作原理；为什么多卡训练几乎一定要开
 
-2. **学习材料（canonical）**
-   - 【先看这个 · 本课自制】NCCL 可视化全解（物理实现 / 5 个集合原语逐步动画 / DDP·FSDP·TP 如何复用原语）: nccl-primer.html
-   - PyTorch DDP tutorial: https://pytorch.org/tutorials/intermediate/ddp_tutorial.html
-   - PyTorch DDP design note: https://pytorch.org/docs/stable/notes/ddp.html
-   - NVIDIA NCCL docs (collective ops): https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/collectives.html
-   - "PyTorch Distributed: Experiences on Accelerating Data Parallel Training": https://arxiv.org/abs/2006.15704
-   - PyTorch AMP recipe: https://pytorch.org/tutorials/recipes/recipes/amp_recipe.html
-   - "Mixed Precision Training" (Micikevicius et al.): https://arxiv.org/abs/1710.03740
-   - HuggingFace "Methods and tools for efficient training on a single GPU / multiple GPUs": https://huggingface.co/docs/transformers/perf_train_gpu_many
+2. **学习材料（canonical）** — 按顺序：
+   - NCCL 可视化全解（本课自制，先看：物理实现 / 5 个集合原语动画 / DDP·FSDP·TP 如何复用原语）: nccl-primer.html
+   - PyTorch DDP tutorial（先用 DDP）: https://pytorch.org/tutorials/intermediate/ddp_tutorial.html
+   - PyTorch DDP design note（bucket / overlap 机制）: https://pytorch.org/docs/stable/notes/ddp.html
+   - PyTorch AMP recipe（mixed precision 上手）: https://pytorch.org/tutorials/recipes/recipes/amp_recipe.html
+   - NVIDIA NCCL docs（collective ops 语义出处）: https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/collectives.html
+   - 选读 — "PyTorch Distributed"（DDP bucket/overlap 的 why，dense 论文）: https://arxiv.org/abs/2006.15704
+   - 选读 — "Mixed Precision Training" (Micikevicius et al.，经典出处): https://arxiv.org/abs/1710.03740
 
    > 任务相关辅助阅读（nccl-tests、profiler 用法、bucket size 调优等）放 DOING.md。
 
@@ -189,14 +189,15 @@
    - 解释 FSDP（PyTorch 原生）与 DeepSpeed ZeRO 的对应关系
    - activation checkpointing 的 trade-off（compute ↔ memory）
 
-2. **学习材料（canonical）**
-   - 【本课自制 · 复习】NCCL 可视化全解之 FSDP 节（AllGather 取权重 + ReduceScatter 收梯度，看 AllReduce 如何被"拆开用"）: nccl-primer.html#fsdp
-   - "ZeRO: Memory Optimizations Toward Training Trillion Parameter Models": https://arxiv.org/abs/1910.02054
-   - PyTorch FSDP tutorial: https://pytorch.org/tutorials/intermediate/FSDP_tutorial.html
-   - PyTorch FSDP advanced: https://pytorch.org/tutorials/intermediate/FSDP_advanced_tutorial.html
-   - DeepSpeed ZeRO docs: https://www.deepspeed.ai/tutorials/zero/
-   - "Reducing Activation Recomputation in Large Transformer Models": https://arxiv.org/abs/2205.05198
-   - HuggingFace memory anatomy: https://huggingface.co/docs/transformers/model_memory_anatomy
+2. **学习材料（canonical）** — 按顺序：
+   - NCCL 可视化全解之 FSDP 节（本课自制·复习：AllGather 取权重 + ReduceScatter 收梯度，AllReduce 如何被"拆开用"）: nccl-primer.html#fsdp
+   - HuggingFace memory anatomy（显存账本讲义：params/grads/opt/activations 逐块字节数）: https://huggingface.co/docs/transformers/model_memory_anatomy
+   - PyTorch FSDP tutorial（FSDP 上手）: https://pytorch.org/tutorials/intermediate/FSDP_tutorial.html
+   - DeepSpeed ZeRO docs（ZeRO 三 stage 各分什么）: https://www.deepspeed.ai/tutorials/zero/
+   - 选读 — PyTorch FSDP advanced（进阶细节）: https://pytorch.org/tutorials/intermediate/FSDP_advanced_tutorial.html
+   - 选读 — "ZeRO" 论文（why·出处，dense）: https://arxiv.org/abs/1910.02054
+   - 选读 — "Reducing Activation Recomputation"（activation 公式出处，dense）: https://arxiv.org/abs/2205.05198
+   - 选读 — HuggingFace "Parallelism methods"（并行全景 DP/PP/TP/ZeRO/3D，DDP 之上的进阶）: https://huggingface.co/docs/transformers/perf_train_gpu_many
 
    > 任务相关辅助阅读（activations 字节数公式推导、FSDP2 vs FSDP1、memory_viz 工具用法等）放 DOING.md。
 
@@ -210,53 +211,49 @@
 
 ---
 
-### A-M4 · 100M–1B 多卡训练实跑（线 1 终点）
+### A-M4 · 多卡真实数据长训练（线 1 终点）
 
-**Topic**：把 A-M0 到 A-M3 学到的所有东西串起来——在 AWS 多 GPU 上跑通 ≥ 100M 参数模型的 FSDP 训练 + 真实数据 pipeline（FineWeb tokenize 落盘）+ sharded checkpoint + spot 中断 resume + profiler bottleneck 归因。这一模块的产出（完整训练日志 + bottleneck 分析）是线 1 在面试中可讲的最高密度证据。
+**Topic**：把 A-M0 到 A-M3 学到的所有东西串成一次真实长训练——在多 GPU 上用真实 web 数据（FineWeb）把 ~350M 模型训过 ≥1B tokens，训练脚本内置 sharded checkpoint + 中断 resume，再用独立脚本做一次 profiling 诊断、归因 bottleneck。「1B」是 token 数不是参数量；模型还是 A-M3 的 350M，新东西是真实数据 + 训够 1B tokens + 长跑工程（ckpt/resume）+ 一次性 profiling 诊断。
 
 0. **环境准备**
 
    **快速 setup**：
-   - **默认跑 350M，不跑 1B**（最大省钱杠杆）：350M + FSDP 在 `p4d.24xlarge`（8× A100 40GB）就够，~$40 跑完；1B 要 `p4de`（80GB）+ 翻倍时长 ~$150。**学习目标（多卡 FSDP + checkpoint resume + bottleneck 分析）350M 和 1B 完全一样**，按 requirements.md「模型质量不是目标」，350M 足够。想跑 1B 再升 p4de
-   - AMI：同 A-M0
-   - 数据：FineWeb-Edu 推荐——更新、质量比 OpenWebText 高
-     ```
-     pip install datasets
-     python -c "from datasets import load_dataset; ds=load_dataset('HuggingFaceFW/fineweb-edu', name='sample-10BT', split='train', streaming=True); ..."
-     ```
-     先 streaming 下载 + tokenize 落到 `.bin` 文件（参考 nanoGPT 的 prepare.py 模式），训练时 mmap 读
-   - 存储：tokenized 数据 ~10–50GB 放 EBS gp3；checkpoint 写 S3（spot 中断后能跨实例 resume）
+   - 机器：`ml.p3dn.24xlarge`（8× V100 32GB, NVLink），同 A-M3，不用另配
+   - 精度：fp32（V100 无 bf16；350M fp32 在 32GB 装得下，A-M3 已验证）
+   - 数据：FineWeb-Edu `sample-10BT` 子集——streaming 下载 + tiktoken 落 `.bin`，训练时 `np.memmap` 读（`pip install datasets`，参考 nanoGPT 的 prepare.py）
+   - 存储：tokenized 数据（≥2GB）放 EBS gp3；checkpoint 写本地或 S3（中断后能跨实例 resume）
    - 仓库布局：`mkdir -p course-a/m4-large-run`
-   - 启动：`torchrun --standalone --nproc_per_node=8 train_large.py --resume_from=s3://your-bucket/ckpts/`
+   - 启动：`torchrun --standalone --nproc_per_node=8 train_large.py --resume_from=<ckpt 路径>`
 
    **值得理解**：
-   - **数据 tokenize 落盘 vs on-the-fly**：on-the-fly tokenize 会让 dataloader 成为瓶颈（CPU 跟不上 GPU），所以**先 tokenize 一次落 `.bin`，训练时 numpy.memmap 读**——这是 nanoGPT 的标准做法，A-M4 必须这么做
-   - **spot 中断处理**：监听 `SIGTERM`（spot 给 2 分钟通知），catch 到就触发 sharded ckpt save → exit；下次 launch 自动从 S3 最新 ckpt resume。这正是过关任务的"100 step → save → 重启 → loss 连续"
-   - **sharded checkpoint API**（FSDP2）：`torch.distributed.checkpoint.save / load` + `DCP.FileSystemWriter('s3://...' )`（需要 `s3fs`）。每个 rank 只写自己的分片，速度快 N 倍
-   - **profiler 在长跑里要采样**：跑 step 100–110 这一段开 profiler 就够，一直开会爆 trace 文件几 GB
-   - **ReadOnly / 最小权限**（合规）：跑训练只需要 S3 read/write 自己的 bucket + EC2 launch；**绝不用 Admin role**，按 requirements.md 项目内合规约束
-   - **MFU（Model FLOPs Utilization）目标 30–50%**——p4de + bf16 + FSDP 跑 1B 拿 ~30% MFU 是合理基线，低于 20% 说明 dataloader 或通信卡了
+   - **数据 tokenize 落盘 vs on-the-fly**：on-the-fly tokenize 会让 dataloader 成为瓶颈（CPU 跟不上 GPU），所以先 tokenize 一次落 `.bin`、训练时 `numpy.memmap` 读——nanoGPT 的标准做法
+   - **effective batch 靠 grad accumulation 凑**：per-GPU 一次只跑 micro_batch=2（A-M3 实测 zero3 能跑），靠 `8 卡 × 2 × grad_accum` 放大有效 batch，不增显存。直接开大 per-GPU batch 必 OOM——activation 是瓶颈
+   - **定期 ckpt 应对中断**：主循环里每 N 步（如 500）存一次 sharded ckpt，重启从最近的接着跑；spot 被收走最多丢 < N 步（几分钟），对 350M 完全可接受。比 SIGTERM 信号方案简单且不会写错（信号 handler 里直接调集合 save 会死锁）。即过关的"跑到 ckpt 点 → kill → 重启 → loss 连续"
+   - **sharded checkpoint API**：`torch.distributed.checkpoint.save / load` + `get_state_dict / set_state_dict`，每 rank 只写自己的分片，快 N 倍；写 S3 需 `s3fs`
+   - **profiling 是一次性诊断，单独脚本、别塞进训练**：profiler 跟 ckpt/MFU 那种"训练内在环节"性质不同——跑一次看清瓶颈就完事，瓶颈结构前几百步就稳定。写独立的 `profile_run.py`（import 和 train 同样的 model/data），跑 ~110 步抓 trace；train_large.py 保持纯粹、不知道 profiler 存在。塞进训练脚本会引入 mode flag + trace overhead 污染 MFU/tok-s + 两次跑共用 ckpt/日志互相覆盖
+   - **MFU（Model FLOPs Utilization）**：实际 FLOPs/s ÷ 理论峰值。V100 fp32 峰值 ~15.7 TFLOPS（A100 bf16 是 312、差精度差卡不可直接比）；能跑出稳定数字 + 解释瓶颈即可
 
 1. **学习目标**
-   - 在 AWS 多 GPU 资源上跑通 ≥ 100M 参数模型的 FSDP 训练
+   - 在多 GPU 上跑通一次 ~350M / ≥1B tokens 的真实数据 FSDP 训练
    - 能用 profiler 定位 bottleneck（compute-bound vs comm-bound vs IO-bound）
-   - 能解释 checkpoint 保存/恢复在 FSDP 下的注意点（`StateDictType.SHARDED_STATE_DICT` vs `FULL_STATE_DICT`）
+   - 能解释 sharded checkpoint 的 save/load + 定期 ckpt resume 怎么做到中断后 loss 不断档
 
-2. **学习材料（canonical）**
-   - PyTorch profiler tutorial: https://pytorch.org/tutorials/recipes/recipes/profiler_recipe.html
-   - "Efficient Large-Scale Language Model Training on GPU Clusters Using Megatron-LM": https://arxiv.org/abs/2104.04473（只读 §2-3，理解 3D parallelism 概念，不要求实现）
-   - FSDP checkpoint API: https://pytorch.org/docs/stable/distributed.checkpoint.html
-   - AWS GPU 资源 onboarding（查你的 GPU 平台 / SageMaker 文档）
+2. **学习材料（canonical）** — 按顺序：
+   - Karpathy "Reproducing GPT-2 in llm.c"（MFU 计算 + 真实 web 数据训练，最对口）: https://github.com/karpathy/llm.c/discussions/677
+   - PyTorch Distributed Checkpoint tutorial（sharded ckpt save/load，get_state_dict/set_state_dict）: https://docs.pytorch.org/tutorials/recipes/distributed_checkpoint_recipe.html
+   - PyTorch profiler recipe（抓 trace 做 bottleneck 归因）: https://docs.pytorch.org/tutorials/recipes/recipes/profiler_recipe.html
+   - HuggingFace optimizer schedules（lr warmup + cosine 的现成实现 `get_cosine_schedule_with_warmup`，A-M4 第一次用 lr schedule）: https://huggingface.co/docs/transformers/main_classes/optimizer_schedules
 
-   > 任务相关辅助阅读（FineWeb tokenize 落盘、spot 中断处理、MFU 计算等）放 DOING.md。
+   > 任务相关辅助阅读（FineWeb tokenize 落盘、定期 ckpt/resume、MFU 计算等）放 DOING.md。
+   > 注：3D parallelism（TP+PP）不在 A-M4 范围——A-M4 是单机 8 卡 FSDP（纯 sharded data parallel）；TP 在 B-M3 学。
 
 3. **Doing 任务** → 见 [`course-a/m4-large-run/DOING.md`](course-a/m4-large-run/DOING.md)
-   - 四个任务：GPU 资源申请 / FineWeb tokenize 落盘 + ≥ 1B tokens 训练 / sharded checkpoint resume 测试 / profiler bottleneck 报告
-   - DOING.md 内含每个任务的 sub-task 拆分、成功/失败标志、辅助阅读、deliverable
+   - 核心是一次长训练：FineWeb tokenize 落盘 → 350M / ≥1B tokens 训练（train_large.py 内置 ckpt/resume + MFU 监控）；外加独立脚本 profile_run.py 做一次 profiling 诊断 → bottleneck 报告
+   - DOING.md 内含 sub-task 拆分、具体参数、成功/失败标志、辅助阅读、deliverable
 
 4. **过关标准** → 见 [`course-a/m4-large-run/QUIZ.md`](course-a/m4-large-run/QUIZ.md)
    - 任务级完成清单（模型续写样例 + 训练日志 + checkpoint resume 验证 + bottleneck 报告）在 DOING.md
-   - QUIZ.md 是 sharded checkpoint 设计 + bottleneck 归因方法 + MFU 计算 + spot 中断处理的概念自查
+   - QUIZ.md 是 sharded checkpoint 设计 + bottleneck 归因方法 + MFU 计算 + 定期 ckpt/resume 的概念自查
 
 ---
 
@@ -291,13 +288,14 @@
    - 理解 LLM serving 的关键指标：TTFT、TPOT、吞吐 tokens/sec、p50/p99 latency
    - sampling 基础：greedy / temperature / top-k / top-p / repetition penalty
 
-2. **学习材料（canonical）**
-   - "Efficient Memory Management for Large Language Model Serving with PagedAttention" (vLLM paper): https://arxiv.org/abs/2309.06180
-   - HuggingFace generation strategies: https://huggingface.co/docs/transformers/main/en/generation_strategies
-   - "A Survey on Efficient Inference for Large Language Models": https://arxiv.org/abs/2404.14294
-   - Lilian Weng "Large Transformer Model Inference Optimization": https://lilianweng.github.io/posts/2023-01-10-inference-optimization/
+2. **学习材料（canonical）** — 按顺序：
+   - Databricks "LLM Inference Performance Engineering"（先建心智模型：prefill/decode、compute/mem-bound、TTFT/TPOT）: https://www.databricks.com/blog/llm-inference-performance-engineering-best-practices
+   - HuggingFace LLM inference tutorial（学工具：generate / left-pad / sampling）: https://huggingface.co/docs/transformers/main/en/llm_tutorial
+   - NVIDIA "Mastering LLM Techniques: Inference Optimization"（选读、深挖）: https://developer.nvidia.com/blog/mastering-llm-techniques-inference-optimization/
+   - kipply "Transformer Inference Arithmetic"（选读、把 memory-bound 算明白）: https://kipp.ly/transformer-inference-arithmetic/
 
-   > 任务相关辅助阅读（HF transformers `generate` 内部细节、bf16 推理、profiler 测 prefill/decode 等）放 DOING.md。
+   > 任务相关辅助阅读（HF `generate` 内部细节、bf16 推理、profiler 测 prefill/decode 等）放 DOING.md。
+   > vLLM PagedAttention 论文在 B-M2 读；survey (2404.14294) 按需查、不必通读。
 
 3. **Doing 任务** → 见 [`course-b/m0-baseline/DOING.md`](course-b/m0-baseline/DOING.md)
    - 三个任务：`naive_infer.py` baseline + TTFT/TPOT 测量 / sampling 实现与单测 / `baseline_bench.md` 对照基线
@@ -334,11 +332,11 @@
    - continuous batching（也叫 in-flight batching / iteration-level scheduling）：与 static batching 的差异，调度循环长什么样
    - 解释 head-of-line blocking 和 padding waste 在 static batching 下的危害
 
-2. **学习材料（canonical）**
-   - "Orca: A Distributed Serving System for Transformer-Based Generative Models" (continuous batching 起源): https://www.usenix.org/conference/osdi22/presentation/yu
-   - Anyscale "How continuous batching enables 23x throughput in LLM inference": https://www.anyscale.com/blog/continuous-batching-llm-inference
-   - vLLM scheduler source code（带着读，不要求完全模仿）: https://github.com/vllm-project/vllm/blob/main/vllm/core/scheduler.py
-   - HuggingFace TGI continuous batching docs: https://huggingface.co/docs/text-generation-inference/conceptual/streaming
+2. **学习材料（canonical）** — 按顺序：
+   - Anyscale "How continuous batching enables 23x throughput"（先读·概念）: https://www.anyscale.com/blog/continuous-batching-llm-inference
+   - HuggingFace "KV Cache from scratch in nanoVLM"（上手）: https://huggingface.co/blog/kv-cache
+   - vLLM scheduler 源码（选读·生产实现）: https://github.com/vllm-project/vllm/blob/main/vllm/v1/core/sched/scheduler.py
+   - "Orca" (OSDI22)（选读·出处）: https://www.usenix.org/conference/osdi22/presentation/yu
 
    > 任务相关辅助阅读（KV cache shape 推导、prefill+decode 合并 batch 的实现细节）放 DOING.md。
 
@@ -377,10 +375,11 @@
    - copy-on-write 与 prefix caching 的关系（理解即可，不强求实现 prefix caching）
    - 解释 attention kernel 在 paged 布局下需要做什么改动
 
-2. **学习材料（canonical）**
-   - vLLM paper 重读 §4-5（数据结构与 kernel）: https://arxiv.org/abs/2309.06180
-   - vLLM PagedAttention kernel C++/CUDA 入口（读懂 host 侧 launch 代码即可）: https://github.com/vllm-project/vllm/tree/main/csrc/attention
-   - Aleksa Gordić "PagedAttention from scratch" 系列博客（如可访问）: https://github.com/gordicaleksa/get_started_with_open_source_llms
+2. **学习材料（canonical）** — 按顺序：
+   - GenAI System Design "PagedAttention & vLLM: Fixing the KV Cache Memory Crisis"（先读·概念，OS 分页类比）: https://www.genaisystemdesign.com/blog/paged-attention
+   - tspeterkim/paged-attention-minimal（上手·约 300 行手写）: https://github.com/tspeterkim/paged-attention-minimal
+   - vLLM PagedAttention kernel `attention_kernels.cu` @v0.6.0（选读·kernel 层）: https://github.com/vllm-project/vllm/blob/v0.6.0/csrc/attention/attention_kernels.cu
+   - vLLM PagedAttention 论文 (SOSP 2023)（选读·出处，先 §2-3 后 §4-5）: https://arxiv.org/abs/2309.06180
 
    > 任务相关辅助阅读（block size 选择经验、`torch.gather` 实现细节、Triton kernel 入门）放 DOING.md。
 
@@ -424,12 +423,12 @@
    - 多机部署下的 NCCL 拓扑（NVLink intra-node、IB/EFA inter-node）对 TP 效率的影响
    - 与课程 A 的 FSDP 对比：训练 vs 推理的并行需求差异
 
-2. **学习材料（canonical）**
-   - 【本课自制 · 复习】NCCL 可视化全解之 TP 节（Megatron 列切/行切 MLP，一次前向只需 1 个 AllReduce）: nccl-primer.html#tp
-   - "Megatron-LM: Training Multi-Billion Parameter Language Models Using Model Parallelism": https://arxiv.org/abs/1909.08053
-   - vLLM distributed inference docs: https://docs.vllm.ai/en/latest/serving/distributed_serving.html
-   - PyTorch Tensor Parallel API: https://pytorch.org/tutorials/intermediate/TP_tutorial.html
-   - SGLang architecture overview（对照阅读，不需要复现）: https://github.com/sgl-project/sglang
+2. **学习材料（canonical）** — 按顺序：
+   - NCCL 可视化全解之 TP 节（本课自制·先读·概念）: nccl-primer.html#tp
+   - PyTorch Tensor Parallel API tutorial（上手）: https://pytorch.org/tutorials/intermediate/TP_tutorial.html
+   - vLLM "Parallelism and Scaling"（推理部署视角）: https://docs.vllm.ai/en/latest/serving/parallelism_scaling.html
+   - Megatron-LM 论文（选读·TP 切法出处）: https://arxiv.org/abs/1909.08053
+   - SGLang 仓库（选读·真实框架对照点）: https://github.com/sgl-project/sglang
 
    > 任务相关辅助阅读（Megatron column/row parallel 推导、EFA 配置、NVLink vs PCIe 带宽对比）放 DOING.md。
 
@@ -472,11 +471,13 @@
    - 能逐项归因差距：kernel 优化（FlashAttention、CUDA graph）、调度策略、量化、prefix cache 等
    - 给出一个"如果继续投入会先做什么"的优先级清单
 
-2. **学习材料（canonical）**
-   - vLLM benchmarks scripts: https://github.com/vllm-project/vllm/tree/main/benchmarks
-   - "FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness": https://arxiv.org/abs/2205.14135（只读 §1-3，理解为什么是 IO-bound 优化，不要求实现）
-   - SGLang RadixAttention paper: https://arxiv.org/abs/2312.07104
-   - NVIDIA CUDA graph + LLM serving 介绍: https://developer.nvidia.com/blog/accelerating-llms-with-cuda-graphs/
+2. **学习材料（canonical）** — 按顺序：
+   - Anyscale "How continuous batching enables 23x throughput"（先读·对比叙事范例）: https://www.anyscale.com/blog/continuous-batching-llm-inference
+   - vLLM 官方博客 "Easy, Fast, and Cheap LLM Serving with PagedAttention"（认清对比对象）: https://blog.vllm.ai/2023/06/20/vllm.html
+   - vLLM benchmarks scripts（上手·对比工具）: https://github.com/vllm-project/vllm/tree/main/benchmarks
+   - "Accelerating PyTorch with CUDA Graphs"（归因 CUDA graph 项）: https://pytorch.org/blog/accelerating-pytorch-with-cuda-graphs/
+   - FlashAttention 论文（选读·归因 kernel 项，§1-3）: https://arxiv.org/abs/2205.14135
+   - SGLang RadixAttention 论文（选读·归因 prefix caching 项）: https://arxiv.org/abs/2312.07104
 
    > 任务相关辅助阅读（OpenAI API spec、vLLM/SGLang 启动配置、ShareGPT 数据格式）放 DOING.md。
 

@@ -59,17 +59,35 @@ def parse_module(code):
     setup_m = re.search(r"0\. \*\*环境准备\*\*\n\n(.+?)(?=\n1\. \*\*学习目标\*\*)", section, re.DOTALL)
     setup_md = setup_m.group(1).strip() if setup_m else ""
     
-    readings_m = re.search(r"2\. \*\*学习材料.*?\*\*\n((?:   - .+\n)+)", section)
+    # Capture the whole readings block: from the "2. **学习材料...**" header line
+    # (which may carry trailing text like "— 按顺序：") up to the next section
+    # ("3. **") or a "   >" note line or end-of-section.
+    readings_m = re.search(r"2\. \*\*学习材料[^\n]*\n(.+?)(?=\n3\. \*\*|\n   >|\Z)", section, re.DOTALL)
     readings = []
     if readings_m:
-        for line in readings_m.group(1).strip().split("\n"):
-            line = line.strip("- ").strip()
-            # http(s) link, or a local relative page (e.g. nccl-primer.html#anchor)
-            url_m = re.match(r"(.+?):\s*(https?://\S+|[\w./-]+\.html(?:#[\w-]+)?)", line)
-            if url_m:
-                readings.append((url_m.group(1).strip(), url_m.group(2).strip()))
-            else:
-                readings.append((line, None))
+        # A new entry begins with "   - " (or "- "). Lines that are indented but
+        # do NOT start with a dash are continuation/description lines and get
+        # folded into the previous entry's note (this is the multi-line
+        # "self-study syllabus" format: title+url on one line, why-to-read below).
+        for raw in readings_m.group(1).split("\n"):
+            if not raw.strip():
+                continue
+            is_item = re.match(r"\s*-\s+", raw)
+            if is_item:
+                line = re.sub(r"^\s*-\s+", "", raw).strip()
+                # http(s) link, or a local relative page (e.g. nccl-primer.html#anchor).
+                # URL stops at whitespace or a fullwidth paren so a trailing CJK
+                # annotation like "（只读 §2-3）" isn't swallowed into the href.
+                url_m = re.match(r"(.+?):\s*(https?://[^\s（）]+|[\w./-]+\.html(?:#[\w-]+)?)\s*(.*)", line)
+                if url_m:
+                    readings.append([url_m.group(1).strip(), url_m.group(2).strip(), url_m.group(3).strip()])
+                else:
+                    readings.append([line, None, ""])
+            elif readings:
+                # continuation line → append to the current entry's note
+                cont = raw.strip()
+                readings[-1][2] = (readings[-1][2] + " " + cont).strip()
+        readings = [tuple(r) for r in readings]
     
     return {"topic": topic, "topic_preview": topic_preview, "objectives": objectives,
             "setup_md": setup_md, "readings": readings}
@@ -98,11 +116,13 @@ def render_setup(setup_md):
 
 def render_readings(readings):
     out = ['<ol class="reading-list">']
-    for text, url in readings:
+    for text, url, *rest in readings:
+        note = rest[0] if rest else ""
+        note_html = f' <span class="reading-note">{md_inline(note)}</span>' if note else ""
         if url:
-            out.append(f'<li><a href="{url}" target="_blank" rel="noopener">{md_inline(text)}</a></li>')
+            out.append(f'<li><a href="{url}" target="_blank" rel="noopener">{md_inline(text)}</a>{note_html}</li>')
         else:
-            out.append(f'<li>{md_inline(text)}</li>')
+            out.append(f'<li>{md_inline(text)}{note_html}</li>')
     out.append('</ol>')
     return "\n".join(out)
 
@@ -180,6 +200,7 @@ __CSS_BASE__
   .reading-list li::before { content: counter(rd, decimal-leading-zero); position: absolute; left: 0; top: 5px; font-family: var(--mono); font-size: 11px; color: var(--muted); }
   .reading-list a { color: var(--accent); border-bottom: 1px solid currentColor; word-break: break-word; }
   .reading-list a:hover { background: var(--accent); color: var(--bg); text-decoration: none; }
+  .reading-note { color: var(--muted); font-size: 12px; }
   .start-doing { display: inline-block; margin-top: 14px; padding: 8px 14px; border: 1px solid var(--accent); color: var(--accent); font-family: var(--mono); font-size: 12px; letter-spacing: 0.04em; transition: background 0.15s, color 0.15s; }
   .start-doing:hover { background: var(--accent); color: var(--bg); text-decoration: none; }
   .appendix { margin-top: 64px; padding-top: 24px; border-top: 2px solid var(--border-strong); }
