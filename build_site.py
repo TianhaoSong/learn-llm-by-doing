@@ -129,16 +129,23 @@ def render_readings(readings):
 CSS_BASE = '''  :root {
     --bg: #ffffff; --bg-soft: #fafafa; --fg: #111111; --fg-2: #2a2a2a;
     --muted: #6a6a6a; --border: #e2e2e2; --border-strong: #111111; --accent: #c0392b;
+    --on-accent: #ffffff;       /* 文字压在 accent 实心块上时的颜色 */
+    --accent-soft: #fbeae8;     /* accent 的极淡底（部分/缺口的浅填充） */
     --sans: 'IBM Plex Sans', -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
     --mono: 'IBM Plex Mono', ui-monospace, monospace;
+    /* type scale — 7 档，整体抬高一档（正文 16，标签下限 12，无 <12 的字）*/
+    --fs-h1: 34px; --fs-h2: 24px; --fs-h3: 19px;
+    --fs-lg: 17px; --fs-base: 16px; --fs-sm: 14px; --fs-label: 12px;
   }
   @media (prefers-color-scheme: dark) {
     :root { --bg: #0e0e0e; --bg-soft: #161616; --fg: #e8e8e8; --fg-2: #c4c4c4;
-      --muted: #888888; --border: #2a2a2a; --border-strong: #e8e8e8; --accent: #e57367; }
+      --muted: #888888; --border: #2a2a2a; --border-strong: #e8e8e8; --accent: #e57367;
+      --on-accent: #160a08;     /* 浅珊瑚块上用深字才清晰（dark mode 关键修正） */
+      --accent-soft: #2a1512; }
   }
   * { box-sizing: border-box; }
   html { scroll-behavior: smooth; }
-  body { margin: 0; font-family: var(--sans); background: var(--bg); color: var(--fg); line-height: 1.7; font-size: 15px; -webkit-font-smoothing: antialiased; }
+  body { margin: 0; font-family: var(--sans); background: var(--bg); color: var(--fg); line-height: 1.7; font-size: var(--fs-base); -webkit-font-smoothing: antialiased; }
   a { color: var(--accent); text-decoration: none; }
   a:hover { text-decoration: underline; }
   code { font-family: var(--mono); background: var(--bg-soft); padding: 1px 5px; border-radius: 2px; font-size: 0.9em; }
@@ -158,59 +165,93 @@ INDEX_TEMPLATE = '''<!DOCTYPE html>
 <style>
 __CSS_BASE__
   .layout { display: grid; grid-template-columns: 240px 1fr; max-width: 1180px; margin: 0 auto; }
-  .toc { position: sticky; top: 0; align-self: start; height: 100vh; overflow-y: auto; padding: 32px 20px 32px 28px; border-right: 1px solid var(--border); font-size: 13px; }
-  .toc-title { font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 12px; }
+  .toc { position: sticky; top: 0; align-self: start; height: 100vh; overflow-y: auto; padding: 32px 20px 32px 28px; border-right: 1px solid var(--border); font-size: var(--fs-sm); }
+  .toc-title { font-family: var(--mono); font-size: var(--fs-label); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 12px; }
   .toc-section { margin-bottom: 20px; }
-  .toc-course { font-size: 13px; font-weight: 600; color: var(--fg); margin-bottom: 6px; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+  .toc-course { font-size: var(--fs-sm); font-weight: 600; color: var(--fg); margin-bottom: 6px; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
   .toc-course .num { font-family: var(--mono); color: var(--muted); margin-right: 6px; font-weight: 500; }
   .toc-list { list-style: none; padding: 0; margin: 0; }
-  .toc-list a { display: grid; grid-template-columns: 38px 1fr; gap: 4px; padding: 3px 0; color: var(--fg-2); text-decoration: none; font-size: 13px; align-items: baseline; }
+  .toc-list a { display: grid; grid-template-columns: 38px 1fr; gap: 4px; padding: 3px 0; color: var(--fg-2); text-decoration: none; font-size: var(--fs-sm); align-items: baseline; }
   .toc-list a > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .toc-list a:hover { color: var(--accent); }
-  .toc-list .code { font-family: var(--mono); color: var(--muted); font-size: 11px; }
+  .toc-list .code { font-family: var(--mono); color: var(--muted); font-size: var(--fs-label); }
   .toc-list a:hover .code { color: var(--accent); }
   main { padding: 40px 40px 60px; min-width: 0; max-width: 820px; }
-  h1.page-title { font-size: 28px; font-weight: 600; margin: 0 0 6px 0; letter-spacing: -0.01em; }
-  .subtitle { font-size: 14px; color: var(--muted); margin-bottom: 24px; }
-  .preface { margin-bottom: 32px; padding: 16px 18px; background: var(--bg-soft); border-left: 2px solid var(--accent); font-size: 13.5px; line-height: 1.7; color: var(--fg-2); }
-  .preface p { margin: 6px 0; }
-  .preface strong { color: var(--fg); }
+  h1.page-title { font-size: var(--fs-h1); font-weight: 600; margin: 0 0 12px 0; letter-spacing: -0.02em; line-height: 1.15; }
+  .positioning { font-size: var(--fs-lg); line-height: 1.65; color: var(--fg-2); margin: 0 0 12px 0; max-width: 660px; }
+  .positioning strong { color: var(--accent); font-weight: 600; }
+  .repo-tag { display: inline-block; font-family: var(--mono); font-size: var(--fs-label); color: var(--muted); letter-spacing: 0.04em; padding: 3px 9px; border: 1px solid var(--border); border-radius: 3px; margin-bottom: 30px; }
+  .usage { font-size: var(--fs-label); line-height: 1.65; color: var(--muted); margin: 6px 0 8px; max-width: 660px; }
+  .usage strong { color: var(--fg-2); font-weight: 600; }
+  /* ── Ontology · 脊柱示意图（编辑风：墨色 + 单一砖红强调；覆盖=视觉重量，非彩虹）── */
+  .ontology { margin: 8px 0 44px; padding: 26px 26px 20px; border: 1px solid var(--border-strong); background: var(--bg); position: relative; }
+  .ontology::before { content: ""; position: absolute; top: 0; left: 0; width: 38px; height: 3px; background: var(--accent); }
+  .ontology .label { font-family: var(--mono); font-size: var(--fs-label); color: var(--muted); letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 6px; }
+  .ontology h2 { font-size: var(--fs-h2); font-weight: 600; margin: 0 0 8px 0; letter-spacing: -0.01em; }
+  .ontology .lead { font-size: var(--fs-sm); color: var(--fg-2); line-height: 1.65; margin: 0 0 22px 0; max-width: 640px; }
+  .ontology .lead strong { color: var(--fg); font-weight: 600; }
+  .omap { overflow-x: auto; padding-bottom: 4px; }
+  /* main axis — the spine */
+  .oaxis { display: flex; align-items: stretch; min-width: 660px; }
+  .onode { flex: 1 1 0; display: flex; flex-direction: column; justify-content: center; gap: 3px; padding: 13px 11px; border: 1.5px solid; text-decoration: none; position: relative; transition: transform .14s ease, box-shadow .14s ease; }
+  .onode .onum { font-family: var(--mono); font-size: var(--fs-label); letter-spacing: 0.04em; }
+  .onode .ozh { font-size: var(--fs-sm); font-weight: 600; line-height: 1.2; }
+  .onode .oen { font-family: var(--mono); font-size: var(--fs-label); letter-spacing: 0.03em; opacity: .7; }
+  .oconn { flex: 0 0 16px; align-self: center; height: 1.5px; background: var(--border-strong); }
+  .oconn.ghost { background: var(--border); }
+  /* state = semantic color (accent = 已攻克), readable in light & dark */
+  .onode.covered { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+  .onode.covered .onum, .onode.covered .oen { color: var(--on-accent); opacity: .8; }
+  a.onode.covered { cursor: pointer; }
+  a.onode.covered::after { content: "↗"; position: absolute; top: 7px; right: 9px; font-size: var(--fs-label); color: var(--on-accent); opacity: 0; transition: opacity .14s; }
+  a.onode.covered:hover { transform: translateY(-3px); box-shadow: 0 6px 18px rgba(192,57,43,.32); text-decoration: none; }
+  a.onode.covered:hover::after { opacity: .9; }
+  .onode.gap { background: transparent; border: 1px dashed var(--border); color: var(--muted); }
+  .onode.gap .onum { color: var(--muted); }
+  /* cross-cutting substrate */
+  .oxlabel { font-family: var(--mono); font-size: var(--fs-label); color: var(--muted); letter-spacing: 0.1em; text-transform: uppercase; margin: 20px 0 9px; padding-top: 14px; border-top: 1px dashed var(--border); }
+  .oband { display: block; padding: 10px 14px; border: 1.5px solid; margin-bottom: 8px; text-decoration: none; }
+  .oband b { font-size: var(--fs-label); font-weight: 600; } .oband span { display: block; font-family: var(--mono); font-size: var(--fs-label); opacity: .72; margin-top: 3px; letter-spacing: 0.01em; }
+  .oband.covered { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+  .oband.covered span { color: var(--on-accent); opacity: .85; }
+  a.oband.covered:hover { box-shadow: 0 4px 14px rgba(192,57,43,.3); text-decoration: none; }
+  .oband.gap { background: transparent; border: 1px dashed var(--border); color: var(--muted); }
+  /* legend */
+  .olegend { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 14px; font-family: var(--mono); font-size: var(--fs-label); color: var(--muted); }
+  .olegend .lg { display: inline-flex; align-items: center; gap: 6px; }
+  .olegend .sw { width: 13px; height: 13px; border: 1.5px solid; flex: none; }
+  .sw-c { background: var(--accent); border-color: var(--accent); }
+  .sw-p { background: var(--accent-soft); border-color: var(--accent); }
+  .sw-g { background: transparent; border: 1px dashed var(--border); }
   @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } .toc { display: none; } main { padding: 28px 20px 48px; } }
   .course { margin-top: 48px; }
   .course-head { border-top: 2px solid var(--border-strong); padding-top: 14px; margin-bottom: 20px; }
-  .course-head .label { font-family: var(--mono); font-size: 11px; color: var(--muted); letter-spacing: 0.05em; margin-bottom: 4px; }
-  .course-head h2 { font-size: 22px; font-weight: 600; margin: 0 0 8px 0; letter-spacing: -0.01em; }
-  .course-head .outcome { font-size: 14px; color: var(--fg-2); line-height: 1.6; margin: 0; }
+  .course-head .label { font-family: var(--mono); font-size: var(--fs-label); color: var(--muted); letter-spacing: 0.05em; margin-bottom: 4px; }
+  .course-head h2 { font-size: var(--fs-h2); font-weight: 600; margin: 0 0 8px 0; letter-spacing: -0.01em; }
+  .course-head .outcome { font-size: var(--fs-base); color: var(--fg-2); line-height: 1.6; margin: 0; }
   .course-head .outcome strong { color: var(--accent); font-weight: 500; }
   .module-card { margin: 18px 0; padding: 18px 20px; border: 1px solid var(--border); transition: border-color 0.15s; }
   .module-card:hover { border-color: var(--border-strong); }
   .module-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
-  .module-head .code { font-family: var(--mono); font-size: 12px; color: var(--accent); font-weight: 500; letter-spacing: 0.03em; }
-  .module-head h3 { font-size: 17px; font-weight: 600; margin: 0; letter-spacing: -0.005em; }
-  .topic { padding: 10px 14px; background: var(--bg-soft); border-left: 2px solid var(--accent); font-size: 13px; line-height: 1.6; color: var(--fg-2); margin: 10px 0 14px 0; }
-  .topic .label { font-family: var(--mono); font-size: 10px; color: var(--accent); letter-spacing: 0.06em; font-weight: 500; margin-right: 6px; }
+  .module-head .code { font-family: var(--mono); font-size: var(--fs-label); color: var(--accent); font-weight: 500; letter-spacing: 0.03em; }
+  .module-head h3 { font-size: var(--fs-h3); font-weight: 600; margin: 0; letter-spacing: -0.005em; }
+  .topic { padding: 10px 14px; background: var(--bg-soft); border-left: 2px solid var(--accent); font-size: var(--fs-sm); line-height: 1.6; color: var(--fg-2); margin: 10px 0 14px 0; }
+  .topic .label { font-family: var(--mono); font-size: var(--fs-label); color: var(--accent); letter-spacing: 0.06em; font-weight: 500; margin-right: 6px; }
   .objectives { margin: 14px 0; }
-  .objectives .label { font-family: var(--mono); font-size: 11px; color: var(--muted); letter-spacing: 0.05em; margin-bottom: 6px; }
-  .objectives ul { margin: 0; padding-left: 22px; font-size: 14px; line-height: 1.7; }
+  .objectives .label { font-family: var(--mono); font-size: var(--fs-label); color: var(--muted); letter-spacing: 0.05em; margin-bottom: 6px; }
+  .objectives ul { margin: 0; padding-left: 22px; font-size: var(--fs-base); line-height: 1.7; }
   .objectives li { margin-bottom: 3px; }
   .readings-section { margin: 14px 0; }
-  .readings-section .label { font-family: var(--mono); font-size: 11px; color: var(--muted); letter-spacing: 0.05em; margin-bottom: 6px; }
+  .readings-section .label { font-family: var(--mono); font-size: var(--fs-label); color: var(--muted); letter-spacing: 0.05em; margin-bottom: 6px; }
   .reading-list { list-style: none; padding: 0; counter-reset: rd; margin: 6px 0 0 0; }
-  .reading-list li { padding: 5px 0 5px 30px; counter-increment: rd; position: relative; font-size: 13.5px; line-height: 1.55; }
-  .reading-list li::before { content: counter(rd, decimal-leading-zero); position: absolute; left: 0; top: 5px; font-family: var(--mono); font-size: 11px; color: var(--muted); }
+  .reading-list li { padding: 5px 0 5px 30px; counter-increment: rd; position: relative; font-size: var(--fs-sm); line-height: 1.55; }
+  .reading-list li::before { content: counter(rd, decimal-leading-zero); position: absolute; left: 0; top: 5px; font-family: var(--mono); font-size: var(--fs-label); color: var(--muted); }
   .reading-list a { color: var(--accent); border-bottom: 1px solid currentColor; word-break: break-word; }
   .reading-list a:hover { background: var(--accent); color: var(--bg); text-decoration: none; }
-  .reading-note { color: var(--muted); font-size: 12px; }
-  .start-doing { display: inline-block; margin-top: 14px; padding: 8px 14px; border: 1px solid var(--accent); color: var(--accent); font-family: var(--mono); font-size: 12px; letter-spacing: 0.04em; transition: background 0.15s, color 0.15s; }
+  .reading-note { color: var(--muted); font-size: var(--fs-label); }
+  .start-doing { display: inline-block; margin-top: 14px; padding: 8px 14px; border: 1px solid var(--accent); color: var(--accent); font-family: var(--mono); font-size: var(--fs-label); letter-spacing: 0.04em; transition: background 0.15s, color 0.15s; }
   .start-doing:hover { background: var(--accent); color: var(--bg); text-decoration: none; }
-  .appendix { margin-top: 64px; padding-top: 24px; border-top: 2px solid var(--border-strong); }
-  .appendix h2 { font-size: 22px; font-weight: 600; margin: 0 0 16px 0; }
-  .appendix .label { font-family: var(--mono); font-size: 11px; color: var(--muted); letter-spacing: 0.05em; margin-bottom: 6px; }
-  .alignment { width: 100%; border-collapse: collapse; font-size: 13px; }
-  .alignment th, .alignment td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
-  .alignment th { font-family: var(--mono); font-size: 11px; color: var(--muted); font-weight: 500; border-bottom: 1px solid var(--border-strong); }
-  .alignment .modules { font-family: var(--mono); font-size: 12px; color: var(--accent); white-space: nowrap; }
-  footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--border); font-size: 12px; color: var(--muted); font-family: var(--mono); }
+  footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--border); font-size: var(--fs-label); color: var(--muted); font-family: var(--mono); }
 </style>
 </head>
 <body>
@@ -222,27 +263,15 @@ __TOC__
   </nav>
 
   <main>
-    <h1 class="page-title">learn-llm-by-doing — 课程索引</h1>
-    <div class="subtitle">三条工作线 · 15 个模块 · 学习与执行分页</div>
+    <h1 class="page-title">手写 LLM 训练与推理引擎</h1>
+    <p class="positioning">一套自学课程：从零实现 LLM <strong>系统 / infra 层的核心机制</strong>——分布式训练、推理引擎、agent 编排，每步有实测数字；模型 / 数据 / tokenizer 等周边用现成。</p>
+    <div class="repo-tag">learn-llm-by-doing</div>
 
-    <div class="preface">
-      <p>本页是<strong>学习入口</strong>——只列每模块的 Topic / 学习目标 / canonical 学习材料；先看完材料、想清楚为什么做。</p>
-      <p>每个模块底部 "<strong>→ 开始做</strong>" 跳到该模块的<strong>执行页</strong>，含环境准备 + Doing 任务（DOING.md 全文）+ 过关标准（QUIZ.md 全文）。学习与做分开。</p>
-      <p>Out-of-Scope：chatbot/RAG 上层应用、深度数学推导、大段博客或文档撰写、死磕收敛/调参。</p>
-    </div>
+__ONTOLOGY__
+
+    <p class="usage">下方按三条工作线列模块：每张卡是<strong>学习入口</strong>（Topic / 目标 / 读物）；卡底 “<strong>→ 开始做</strong>” 进<strong>执行页</strong>（环境 + 任务 + 过关）。学习与执行分开。</p>
 
 __COURSES__
-
-    <section class="appendix" id="alignment">
-      <div class="label">附录</div>
-      <h2>对齐核对表</h2>
-      <table class="alignment">
-        <thead><tr><th style="width: 46%;">成功标准（来自 requirements.md）</th><th style="width: 22%;">覆盖模块</th><th>备注</th></tr></thead>
-        <tbody>
-__ALIGNMENT__
-        </tbody>
-      </table>
-    </section>
 
     <footer>learn-llm-by-doing · 学习与执行分页</footer>
   </main>
@@ -291,24 +320,6 @@ for course in ("a", "b", "c"):
 {chr(10).join(cards)}
   </section>''')
 
-alignment_rows = [
-    ("多 GPU 训练：DDP / FSDP / ZeRO 取舍", "A·M2 · A·M3 · A·M4", "M2 给出 DDP 实测，M3 渐进升 FSDP 并对比 ZeRO 概念，M4 在多卡上跑通"),
-    ("通信模式（all-reduce / reduce-scatter / all-gather）", "A·M2 · A·M3 · B·M3", "A·M2 单独 benchmark；A·M3 在 FSDP 中讲 forward all-gather + backward reduce-scatter；B·M3 推理侧 TP all-reduce"),
-    ("显存占用计算", "A·M3", "mem_calc 脚本 + 实测验证"),
-    ("gradient accumulation 与 micro-batch", "A·M2", "含 <code>no_sync</code> 用法与 step time 对比"),
-    ("KV cache 设计", "A·M1 · B·M1 · B·M2", "A·M1 直觉，B·M1 连续 KV cache 实现，B·M2 paged 实现"),
-    ("为什么需要 PagedAttention", "B·M2", "含 fragmentation / over-provisioning 解释 + 自实现 + 显存对比"),
-    ("Continuous batching 调度策略", "B·M1", "自写 scheduler + 与 static batching 对比"),
-    ("Prefill vs decode 资源差异", "B·M0 · B·M1", "B·M0 baseline 给出 TTFT/TPOT 区别，B·M1 调度区分两类请求"),
-    ("Multi-agent：什么时候该拆 agent", "C·M1", "拆分判定标准 + 项目决策记录"),
-    ("Multi-agent：handoff 怎么设计", "C·M1", "5 个 handoff 场景 + 结构化 schema 评审"),
-    ("Multi-agent：怎么 eval", "C·M2 · C·M3", "C·M2 搭 harness，C·M3 single vs multi 对照实验"),
-]
-alignment_html = "\n".join(
-    f'        <tr><td>{a}</td><td class="modules">{b}</td><td style="color: var(--muted); font-size: 12px;">{c}</td></tr>'
-    for a, b, c in alignment_rows
-)
-
 # Build TOC HTML — 人工短名，避免按字符硬截断切出断头残词
 TOC_SHORT = {
     "A-M0": "PyTorch 基础",
@@ -334,6 +345,12 @@ def short_title(title, code=None):
     return title.split("（")[0]
 
 toc_parts = []
+toc_parts.append('''    <div class="toc-section">
+      <div class="toc-course"><span class="num">◆</span>领域全景</div>
+      <ul class="toc-list">
+        <li><a href="#ontology"><span class="code">MAP</span><span>LLM Ontology</span></a></li>
+      </ul>
+    </div>''')
 for course in ("a", "b", "c"):
     course_label = {"a": "手写训练", "b": "简化版 vLLM", "c": "Agent"}[course]
     items = []
@@ -346,18 +363,69 @@ for course in ("a", "b", "c"):
 {chr(10).join(items)}
       </ul>
     </div>''')
-toc_parts.append('''    <div class="toc-section">
-      <div class="toc-course"><span class="num">§</span>附录</div>
-      <ul class="toc-list">
-        <li><a href="#alignment"><span class="code">附录</span><span>对齐核对表</span></a></li>
-      </ul>
-    </div>''')
 toc_html = "\n".join(toc_parts)
+
+# ---- Ontology section: hand-written HTML (no mermaid, no CDN, no JS) ----
+# Main axis = 6 clickable boxes (color = course coverage; covered ones link
+# straight into their course section). Cross-cutting + eval as bands below.
+def build_ontology_section():
+    # (id, 中文, 英文, 状态[covered/gap], 跳转锚点 or None) — 只两态
+    axis = [
+        ("1", "数据", "Data", "gap", None),
+        ("2", "模型架构", "Architecture", "gap", None),
+        ("3", "预训练", "Pre-training", "covered", "#course-a"),
+        ("4", "后训练", "Post-training", "gap", None),
+        ("5", "推理与 Serving", "Inference", "covered", "#course-b"),
+        ("6", "编排与应用", "Orchestration", "covered", "#course-c"),
+    ]
+    nodes = []
+    for i, (num, zh, en, lvl, href) in enumerate(axis):
+        inner = (f'<span class="onum">{num}</span><span class="ozh">{zh}</span>'
+                 f'<span class="oen">{en}</span>')
+        tag = (f'<a class="onode {lvl}" href="{href}">{inner}</a>' if href
+               else f'<div class="onode {lvl}">{inner}</div>')
+        nodes.append(tag)
+        if i < len(axis) - 1:
+            # connector dims when it touches an uncovered node (ghost spine)
+            ghost = "ghost" if (lvl == "gap" or axis[i+1][3] == "gap") else ""
+            nodes.append(f'<span class="oconn {ghost}"></span>')
+    axis_html = "\n        ".join(nodes)
+
+    cross = [
+        ("covered", "系统与效率", "DDP·FSDP·ZeRO·TP·PP / NCCL / 显存 / 重计算·卸载 / 容错", "#course-a"),
+        ("gap", "精度与硬件", "浮点·混精度 / 量化 / GPU·加速器 / 互联 / roofline", None),
+        ("gap", "Scaling Laws", "幂律拟合 / Chinchilla / muP / 涌现 / test-time", None),
+    ]
+    cross_html = "\n        ".join(
+        (f'<a class="oband {lvl}" href="{href}">' if href else f'<div class="oband {lvl}">')
+        + f'<b>{t}</b><span>{sub}</span>' + ('</a>' if href else '</div>')
+        for lvl, t, sub, href in cross
+    )
+
+    return f'''    <section class="ontology" id="ontology">
+      <div class="label">课程路线图</div>
+      <h2>从训练模型到用模型搭系统</h2>
+      <p class="lead"><strong>实心格子有课程，点进去学</strong>；其余暂时没有。</p>
+      <div class="omap">
+        <div class="oaxis">
+        {axis_html}
+        </div>
+        <div class="oxlabel">贯穿各环节的底层主题</div>
+        {cross_html}
+        <div class="oband gap"><b>评估</b><span>模型 eval / 方法学 / 污染 / 幻觉 / 偏见 / 可解释性</span></div>
+      </div>
+      <div class="olegend">
+        <span class="lg"><span class="sw sw-c"></span>有课程，点进去学</span>
+        <span class="lg"><span class="sw sw-g"></span>暂时没有</span>
+      </div>
+    </section>'''
+
+ontology_html = build_ontology_section()
 
 index_html = INDEX_TEMPLATE.replace("__CSS_BASE__", CSS_BASE) \
                            .replace("__TOC__", toc_html) \
-                           .replace("__COURSES__", "\n".join(course_sections)) \
-                           .replace("__ALIGNMENT__", alignment_html)
+                           .replace("__ONTOLOGY__", ontology_html) \
+                           .replace("__COURSES__", "\n".join(course_sections))
 
 INDEX_HTML.write_text(index_html)
 print(f"Wrote {INDEX_HTML} ({len(index_html)} bytes)")
@@ -376,48 +444,48 @@ MODULE_TEMPLATE = '''<!DOCTYPE html>
 <style>
 __CSS_BASE__
   .layout { max-width: 880px; margin: 0 auto; padding: 32px 32px 60px; }
-  .back { font-family: var(--mono); font-size: 12px; color: var(--muted); display: inline-block; margin-bottom: 16px; padding: 4px 8px; border: 1px solid var(--border); }
+  .back { font-family: var(--mono); font-size: var(--fs-label); color: var(--muted); display: inline-block; margin-bottom: 16px; padding: 4px 8px; border: 1px solid var(--border); }
   .back:hover { color: var(--accent); border-color: var(--accent); text-decoration: none; }
   .module-head { display: flex; align-items: baseline; gap: 12px; padding-bottom: 10px; border-bottom: 2px solid var(--border-strong); margin-bottom: 16px; flex-wrap: wrap; }
-  .module-head .code { font-family: var(--mono); font-size: 13px; color: var(--accent); font-weight: 500; letter-spacing: 0.03em; }
-  .module-head h1 { font-size: 24px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
-  .topic { padding: 12px 14px; background: var(--bg-soft); border-left: 2px solid var(--accent); font-size: 13px; line-height: 1.65; color: var(--fg-2); margin: 0 0 24px 0; }
-  .topic .label { font-family: var(--mono); font-size: 10px; color: var(--accent); letter-spacing: 0.06em; font-weight: 500; margin-right: 6px; }
+  .module-head .code { font-family: var(--mono); font-size: var(--fs-sm); color: var(--accent); font-weight: 500; letter-spacing: 0.03em; }
+  .module-head h1 { font-size: var(--fs-h2); font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+  .topic { padding: 12px 14px; background: var(--bg-soft); border-left: 2px solid var(--accent); font-size: var(--fs-sm); line-height: 1.65; color: var(--fg-2); margin: 0 0 24px 0; }
+  .topic .label { font-family: var(--mono); font-size: var(--fs-label); color: var(--accent); letter-spacing: 0.06em; font-weight: 500; margin-right: 6px; }
   .section { margin: 32px 0; }
   .section-head { display: flex; align-items: baseline; gap: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--border-strong); margin-bottom: 16px; }
-  .section-head .num { font-family: var(--mono); font-size: 11px; color: var(--muted); letter-spacing: 0.04em; }
-  .section-head h2 { font-size: 17px; font-weight: 600; margin: 0; letter-spacing: -0.005em; }
-  .setup h4 { font-family: var(--mono); font-size: 11px; color: var(--muted); letter-spacing: 0.05em; margin: 14px 0 6px 0; font-weight: 500; }
+  .section-head .num { font-family: var(--mono); font-size: var(--fs-label); color: var(--muted); letter-spacing: 0.04em; }
+  .section-head h2 { font-size: var(--fs-h3); font-weight: 600; margin: 0; letter-spacing: -0.005em; }
+  .setup h4 { font-family: var(--mono); font-size: var(--fs-label); color: var(--muted); letter-spacing: 0.05em; margin: 14px 0 6px 0; font-weight: 500; }
   .setup h4:first-child { margin-top: 0; }
-  .setup ul { margin: 0; padding-left: 22px; font-size: 14px; line-height: 1.7; }
+  .setup ul { margin: 0; padding-left: 22px; font-size: var(--fs-base); line-height: 1.7; }
   .setup li { margin-bottom: 4px; }
   .nav-pills { display: flex; gap: 8px; padding: 8px 0; margin-bottom: 16px; position: sticky; top: 0; background: var(--bg); z-index: 10; border-bottom: 1px solid var(--border); }
-  .nav-pills a { font-family: var(--mono); font-size: 11px; padding: 6px 10px; border: 1px solid var(--border); color: var(--muted); letter-spacing: 0.04em; }
+  .nav-pills a { font-family: var(--mono); font-size: var(--fs-label); padding: 6px 10px; border: 1px solid var(--border); color: var(--muted); letter-spacing: 0.04em; }
   .nav-pills a:hover { color: var(--accent); border-color: var(--accent); text-decoration: none; }
 
   /* Markdown rendered */
-  .md-rendered { font-size: 14px; line-height: 1.7; color: var(--fg-2); }
+  .md-rendered { font-size: var(--fs-base); line-height: 1.7; color: var(--fg-2); }
   .md-rendered h1 { display: none; }
-  .md-rendered h2 { font-size: 16px; font-weight: 600; color: var(--fg); margin: 22px 0 10px 0; padding-bottom: 6px; border-bottom: 1px solid var(--border-strong); letter-spacing: -0.005em; }
-  .md-rendered h3 { font-size: 14px; font-weight: 600; color: var(--fg); margin: 16px 0 8px 0; font-family: var(--mono); letter-spacing: 0.02em; }
-  .md-rendered h4 { font-family: var(--mono); font-size: 11px; color: var(--muted); letter-spacing: 0.05em; margin: 12px 0 4px 0; font-weight: 500; }
+  .md-rendered h2 { font-size: var(--fs-lg); font-weight: 600; color: var(--fg); margin: 22px 0 10px 0; padding-bottom: 6px; border-bottom: 1px solid var(--border-strong); letter-spacing: -0.005em; }
+  .md-rendered h3 { font-size: var(--fs-base); font-weight: 600; color: var(--fg); margin: 16px 0 8px 0; font-family: var(--mono); letter-spacing: 0.02em; }
+  .md-rendered h4 { font-family: var(--mono); font-size: var(--fs-label); color: var(--muted); letter-spacing: 0.05em; margin: 12px 0 4px 0; font-weight: 500; }
   .md-rendered p { margin: 8px 0; }
   .md-rendered ul, .md-rendered ol { margin: 6px 0 10px 0; padding-left: 24px; }
   .md-rendered li { margin-bottom: 4px; }
   .md-rendered ul ul, .md-rendered ol ol { margin: 4px 0; }
-  .md-rendered blockquote { margin: 10px 0; padding: 10px 14px; border-left: 2px solid var(--muted); background: var(--bg-soft); color: var(--fg-2); font-size: 13.5px; }
+  .md-rendered blockquote { margin: 10px 0; padding: 10px 14px; border-left: 2px solid var(--muted); background: var(--bg-soft); color: var(--fg-2); font-size: var(--fs-sm); }
   .md-rendered blockquote p { margin: 4px 0; }
   .md-rendered code { font-family: var(--mono); background: var(--bg-soft); padding: 1px 5px; border-radius: 2px; font-size: 0.88em; color: var(--fg); }
-  .md-rendered pre { background: var(--bg-soft); border: 1px solid var(--border); padding: 12px 14px; overflow-x: auto; font-size: 12.5px; line-height: 1.55; margin: 10px 0; }
-  .md-rendered pre code { background: transparent; padding: 0; font-size: 12.5px; }
+  .md-rendered pre { background: var(--bg-soft); border: 1px solid var(--border); padding: 12px 14px; overflow-x: auto; font-size: var(--fs-label); line-height: 1.55; margin: 10px 0; }
+  .md-rendered pre code { background: transparent; padding: 0; font-size: var(--fs-label); }
   .md-rendered a { color: var(--accent); border-bottom: 1px solid currentColor; word-break: break-word; }
   .md-rendered a:hover { background: var(--accent); color: var(--bg); text-decoration: none; }
   .md-rendered strong { color: var(--fg); font-weight: 600; }
-  .md-rendered table { border-collapse: collapse; margin: 10px 0; font-size: 13px; width: 100%; }
+  .md-rendered table { border-collapse: collapse; margin: 10px 0; font-size: var(--fs-sm); width: 100%; }
   .md-rendered th, .md-rendered td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; vertical-align: top; }
-  .md-rendered th { background: var(--bg-soft); font-family: var(--mono); font-size: 11px; color: var(--muted); font-weight: 500; }
+  .md-rendered th { background: var(--bg-soft); font-family: var(--mono); font-size: var(--fs-label); color: var(--muted); font-weight: 500; }
   .md-rendered hr { border: none; border-top: 1px solid var(--border); margin: 18px 0; }
-  footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--border); font-size: 12px; color: var(--muted); font-family: var(--mono); }
+  footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--border); font-size: var(--fs-label); color: var(--muted); font-family: var(--mono); }
 </style>
 </head>
 <body>
