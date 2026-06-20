@@ -168,6 +168,8 @@ __CSS_BASE__
   .toc { position: sticky; top: 0; align-self: start; height: 100vh; overflow-y: auto; padding: 32px 20px 32px 28px; border-right: 1px solid var(--border); font-size: var(--fs-sm); }
   .toc-title { font-family: var(--mono); font-size: var(--fs-label); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 12px; }
   .toc-section { margin-bottom: 20px; }
+  .toc-top { display: block; font-size: var(--fs-sm); font-weight: 600; color: var(--fg); text-decoration: none; }
+  .toc-top:hover { color: var(--accent); text-decoration: none; }
   .toc-course { font-size: var(--fs-sm); font-weight: 600; color: var(--fg); margin-bottom: 6px; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
   .toc-course .num { font-family: var(--mono); color: var(--muted); margin-right: 6px; font-weight: 500; }
   .toc-list { list-style: none; padding: 0; margin: 0; }
@@ -178,12 +180,11 @@ __CSS_BASE__
   .toc-list a:hover .code { color: var(--accent); }
   main { padding: 40px 40px 60px; min-width: 0; max-width: 820px; }
   h1.page-title { font-size: var(--fs-h1); font-weight: 600; margin: 0 0 12px 0; letter-spacing: -0.02em; line-height: 1.15; }
-  .positioning { font-size: var(--fs-lg); line-height: 1.65; color: var(--fg-2); margin: 0 0 12px 0; max-width: 660px; }
+  .positioning { font-size: var(--fs-lg); line-height: 1.65; color: var(--fg-2); margin: 0 0 32px 0; max-width: 660px; }
   .positioning strong { color: var(--accent); font-weight: 600; }
-  .repo-tag { display: inline-block; font-family: var(--mono); font-size: var(--fs-label); color: var(--muted); letter-spacing: 0.04em; padding: 3px 9px; border: 1px solid var(--border); border-radius: 3px; margin-bottom: 30px; }
   .usage { font-size: var(--fs-label); line-height: 1.65; color: var(--muted); margin: 6px 0 8px; max-width: 660px; }
   .usage strong { color: var(--fg-2); font-weight: 600; }
-  /* ── Ontology · 脊柱示意图（编辑风：墨色 + 单一砖红强调；覆盖=视觉重量，非彩虹）── */
+  /* ── 课程路线图（两态：实心 accent = 有课程可点 / 虚线 = 暂无）── */
   .ontology { margin: 8px 0 44px; padding: 26px 26px 20px; border: 1px solid var(--border-strong); background: var(--bg); position: relative; }
   .ontology::before { content: ""; position: absolute; top: 0; left: 0; width: 38px; height: 3px; background: var(--accent); }
   .ontology .label { font-family: var(--mono); font-size: var(--fs-label); color: var(--muted); letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 6px; }
@@ -264,8 +265,7 @@ __TOC__
 
   <main>
     <h1 class="page-title">手写 LLM 训练与推理引擎</h1>
-    <p class="positioning">一套自学课程：从零实现 LLM <strong>系统 / infra 层的核心机制</strong>——分布式训练、推理引擎、agent 编排，每步有实测数字；模型 / 数据 / tokenizer 等周边用现成。</p>
-    <div class="repo-tag">learn-llm-by-doing</div>
+    <p class="positioning">跟着<strong>从零动手写</strong>，搞懂 LLM 是怎么训练、怎么推理、怎么搭成 agent 的。</p>
 
 __ONTOLOGY__
 
@@ -346,10 +346,7 @@ def short_title(title, code=None):
 
 toc_parts = []
 toc_parts.append('''    <div class="toc-section">
-      <div class="toc-course"><span class="num">◆</span>领域全景</div>
-      <ul class="toc-list">
-        <li><a href="#ontology"><span class="code">MAP</span><span>LLM Ontology</span></a></li>
-      </ul>
+      <a class="toc-top" href="#ontology">课程路线图</a>
     </div>''')
 for course in ("a", "b", "c"):
     course_label = {"a": "手写训练", "b": "简化版 vLLM", "c": "Agent"}[course]
